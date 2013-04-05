@@ -1,7 +1,7 @@
 krb5 (1.10.1+dfsg-5) unstable; urgency=low
 
   * Import workaround for getaddrinfo bug from upstream.  Described in
-    upstream's RT 7124, addresses the main concern of #697662
+    upstream's RT 7124, Closes: #704647
   * Correct CVE number for CVE-2012-1016 in changelog and patches, Closes:
     #703457
 
