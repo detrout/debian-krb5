@@ -4,8 +4,9 @@ krb5 (1.10.1+dfsg-5) unstable; urgency=low
     upstream's RT 7124, Closes: #704647
   * Correct CVE number for CVE-2012-1016 in changelog and patches, Closes:
     #703457
+  * Import upstream's fix for CVE-2013-1416, Closes: #704775
 
- -- Benjamin Kaduk <kaduk@mit.edu>  Mon, 25 Mar 2013 11:50:07 -0400
+ -- Benjamin Kaduk <kaduk@mit.edu>  Fri, 05 Apr 2013 14:36:50 -0400
 
 krb5 (1.10.1+dfsg-4+nmu1) unstable; urgency=high
 
