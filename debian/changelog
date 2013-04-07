@@ -1,4 +1,4 @@
-krb5 (1.10.1+dfsg-5) unstable; urgency=low
+krb5 (1.10.1+dfsg-5) unstable; urgency=high
 
   * Import workaround for getaddrinfo bug from upstream.  Described in
     upstream's RT 7124, Closes: #704647
