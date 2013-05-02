@@ -87,8 +87,8 @@ krb5int_fast_as_armor(krb5_context context,
 
 krb5_error_code
 krb5int_fast_reply_key(krb5_context context,
-                       krb5_keyblock *strengthen_key,
-                       krb5_keyblock *existing_key, krb5_keyblock *output_key);
+                       const krb5_keyblock *strengthen_key,
+                       const krb5_keyblock *existing_key, krb5_keyblock *output_key);
 
 
 krb5_error_code
@@ -102,5 +102,13 @@ krb5_boolean
 krb5int_upgrade_to_fast_p(krb5_context context,
                           struct krb5int_fast_request_state *state,
                           krb5_pa_data **padata);
+
+krb5_error_code
+krb5int_fast_tgs_armor(krb5_context context,
+                       struct krb5int_fast_request_state *state,
+                       krb5_keyblock *subkey,
+                       krb5_keyblock *session_key,
+                       krb5_ccache ccache,
+                       krb5_data *target_realm);
 
 #endif

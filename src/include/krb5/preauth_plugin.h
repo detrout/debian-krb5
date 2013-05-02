@@ -38,7 +38,7 @@
  *
  *
  * The clpreauth interface has a single supported major version, which is
- * 1.  Major version 1 has a current minor version of 1.  clpreauth modules
+ * 1.  Major version 1 has a current minor version of 2.  clpreauth modules
  * should define a function named clpreauth_<modulename>_initvt, matching
  * the signature:
  *
@@ -47,7 +47,7 @@
  *                            int min_ver, krb5_plugin_vtable vtable);
  *
  * The kdcpreauth interface has a single supported major version, which is 1.
- * Major version 1 has a current minor version of 1.  kdcpreauth modules should
+ * Major version 1 has a current minor version of 2.  kdcpreauth modules should
  * define a function named kdcpreauth_<modulename>_initvt, matching the
  * signature:
  *
@@ -176,6 +176,56 @@ typedef struct krb5_clpreauth_callbacks_st {
                                   const krb5_keyblock *keyblock);
 
     /* End of version 1 clpreauth callbacks. */
+
+    /*
+     * Get the current time for use in a preauth response.  If
+     * allow_unauth_time is true and the library has been configured to allow
+     * it, the current time will be offset using unauthenticated timestamp
+     * information received from the KDC in the preauth-required error, if one
+     * has been received.  Otherwise, the timestamp in a preauth-required error
+     * will only be used if it is protected by a FAST channel.  Only set
+     * allow_unauth_time if using an unauthenticated time offset would not
+     * create a security issue.
+     */
+    krb5_error_code (*get_preauth_time)(krb5_context context,
+                                        krb5_clpreauth_rock rock,
+                                        krb5_boolean allow_unauth_time,
+                                        krb5_timestamp *time_out,
+                                        krb5_int32 *usec_out);
+
+    /* Set a question to be answered by the responder and optionally provide
+     * a challenge. */
+    krb5_error_code (*ask_responder_question)(krb5_context context,
+                                              krb5_clpreauth_rock rock,
+                                              const char *question,
+                                              const char *challenge);
+
+    /* Get an answer from the responder, or NULL if the question was
+     * unanswered. */
+    const char *(*get_responder_answer)(krb5_context context,
+                                        krb5_clpreauth_rock rock,
+                                        const char *question);
+
+    /* Indicate interest in the AS key through the responder interface. */
+    void (*need_as_key)(krb5_context context, krb5_clpreauth_rock rock);
+
+    /*
+     * Get a configuration/state item from an input ccache, which may allow it
+     * to retrace the steps it took last time.  The returned data string is an
+     * alias and should not be freed.
+     */
+    const char *(*get_cc_config)(krb5_context context,
+                                 krb5_clpreauth_rock rock, const char *key);
+
+    /*
+     * Set a configuration/state item which will be recorded to an output
+     * ccache, if the calling application supplied one.  Both key and data
+     * should be valid UTF-8 text.
+     */
+    krb5_error_code (*set_cc_config)(krb5_context context,
+                                     krb5_clpreauth_rock rock,
+                                     const char *key, const char *data);
+    /* End of version 2 clpreauth callbacks (added in 1.11). */
 } *krb5_clpreauth_callbacks;
 
 /*
@@ -215,6 +265,25 @@ typedef void
 (*krb5_clpreauth_request_fini_fn)(krb5_context context,
                                   krb5_clpreauth_moddata moddata,
                                   krb5_clpreauth_modreq modreq);
+
+/*
+ * Optional: process server-supplied data in pa_data and set responder
+ * questions.
+ *
+ * encoded_previous_request may be NULL if there has been no previous request
+ * in the AS exchange.
+ */
+typedef krb5_error_code
+(*krb5_clpreauth_prep_questions_fn)(krb5_context context,
+                                    krb5_clpreauth_moddata moddata,
+                                    krb5_clpreauth_modreq modreq,
+                                    krb5_get_init_creds_opt *opt,
+                                    krb5_clpreauth_callbacks cb,
+                                    krb5_clpreauth_rock rock,
+                                    krb5_kdc_req *request,
+                                    krb5_data *encoded_request_body,
+                                    krb5_data *encoded_previous_request,
+                                    krb5_pa_data *pa_data);
 
 /*
  * Mandatory: process server-supplied data in pa_data and return created data
@@ -299,6 +368,9 @@ typedef struct krb5_clpreauth_vtable_st {
     krb5_clpreauth_tryagain_fn tryagain;
     krb5_clpreauth_supply_gic_opts_fn gic_opts;
     /* Minor version 1 ends here. */
+
+    krb5_clpreauth_prep_questions_fn prep_questions;
+    /* Minor version 2 ends here. */
 } *krb5_clpreauth_vtable;
 
 /*
@@ -335,7 +407,7 @@ typedef struct krb5_kdcpreauth_modreq_st *krb5_kdcpreauth_modreq;
 
 /* The verto context structure type (typedef is in verto.h; we want to avoid a
  * header dependency for the moment). */
-struct verto_context;
+struct verto_ctx;
 
 /* Before using a callback after version 1, modules must check the vers
  * field of the callback structure. */
@@ -506,6 +578,13 @@ typedef void
                                   krb5_kdcpreauth_moddata moddata,
                                   krb5_kdcpreauth_modreq modreq);
 
+/* Optional: invoked after init_fn to provide the module with a pointer to the
+ * verto main loop. */
+typedef krb5_error_code
+(*krb5_kdcpreauth_loop_fn)(krb5_context context,
+                           krb5_kdcpreauth_moddata moddata,
+                           struct verto_ctx *ctx);
+
 typedef struct krb5_kdcpreauth_vtable_st {
     /* Mandatory: name of module. */
     char *name;
@@ -521,6 +600,10 @@ typedef struct krb5_kdcpreauth_vtable_st {
     krb5_kdcpreauth_verify_fn verify;
     krb5_kdcpreauth_return_fn return_padata;
     krb5_kdcpreauth_free_modreq_fn free_modreq;
+    /* Minor 1 ends here. */
+
+    krb5_kdcpreauth_loop_fn loop;
+    /* Minor 2 ends here. */
 } *krb5_kdcpreauth_vtable;
 
 #endif /* KRB5_PREAUTH_PLUGIN_H_INCLUDED */

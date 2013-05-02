@@ -231,6 +231,16 @@ krb5_error_code cms_envelopeddata_verify
 		    receives length of signed_data */
 
 /*
+ * This function retrieves the signer's identity, in a form that could
+ * be passed back in to a future invocation of this module as a candidate
+ * client identity location.
+ */
+krb5_error_code crypto_retrieve_signer_identity
+	(krb5_context context,				/* IN */
+	pkinit_identity_crypto_context id_cryptoctx,	/* IN */
+	const char **identity);				/* OUT */
+
+/*
  * this function returns SAN information found in the
  * received certificate.  at least one of pkinit_sans,
  * upn_sans, or kdc_hostnames must be non-NULL.
@@ -348,7 +358,7 @@ krb5_error_code server_check_dh
 	pkinit_plg_crypto_context plg_cryptoctx,	/* IN */
 	pkinit_req_crypto_context req_cryptoctx,	/* IN */
 	pkinit_identity_crypto_context id_cryptoctx,	/* IN */
-	krb5_octet_data *dh_params,			/* IN
+	krb5_data *dh_params,				/* IN
 		    ???? */
 	int minbits);					/* IN
 		    the mininum number of key bits acceptable */
@@ -398,22 +408,6 @@ krb5_error_code create_krb5_trustedCertifiers
 	pkinit_req_crypto_context req_cryptoctx,	/* IN */
 	pkinit_identity_crypto_context id_cryptoctx,	/* IN */
 	krb5_external_principal_identifier ***trustedCertifiers); /* OUT */
-
-/*
- * this functions takes in crypto specific representation of
- * trustedCas (draft9) and creates a list of krb5_trusted_ca (draft9).
- * draft9 trustedCAs is a CHOICE. we only support choices for
- * [1] caName and [2] issuerAndSerial.  there is no config
- * option available to select the choice yet. default = 1.
- */
-krb5_error_code create_krb5_trustedCas
-	(krb5_context context,				/* IN */
-	pkinit_plg_crypto_context plg_cryptoctx,	/* IN */
-	pkinit_req_crypto_context req_cryptoctx,	/* IN */
-	pkinit_identity_crypto_context id_cryptoctx,	/* IN */
-	int flag,					/* IN
-		    specifies the tag of the CHOICE */
-	krb5_trusted_ca ***trustedCas);			/* OUT */
 
 /*
  * this functions takes in crypto specific representation of the
@@ -636,13 +630,13 @@ krb5_error_code pkinit_identity_set_prompter
 
 krb5_error_code
 pkinit_alg_agility_kdf(krb5_context context,
-                       krb5_octet_data *secret,
-                       krb5_octet_data *alg_oid,
+                       krb5_data *secret,
+                       krb5_data *alg_oid,
                        krb5_const_principal party_u_info,
                        krb5_const_principal party_v_info,
                        krb5_enctype enctype,
-                       krb5_octet_data *as_req,
-                       krb5_octet_data *pk_as_rep,
+                       krb5_data *as_req,
+                       krb5_data *pk_as_rep,
                        krb5_keyblock *key_block);
 
 extern const krb5_octet krb5_pkinit_sha1_oid[];
@@ -652,10 +646,10 @@ extern const size_t krb5_pkinit_sha256_oid_len;
 extern const krb5_octet krb5_pkinit_sha512_oid[];
 extern const size_t  krb5_pkinit_sha512_oid_len;
 /**
- * An ordered set of OIDs, stored as krb5_octet_data of KDF algorithms
+ * An ordered set of OIDs, stored as krb5_data, of KDF algorithms
  * supported by this implementation. The order of this array controls
  * the order in which the server will pick.
  */
-extern const krb5_octet_data const *supported_kdf_alg_ids[] ;
+extern krb5_data const * const supported_kdf_alg_ids[];
 
 #endif	/* _PKINIT_CRYPTO_H */

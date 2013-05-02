@@ -24,7 +24,7 @@
 #include "gssapiP_krb5.h"
 
 /*
- * $Id: process_context_token.c 25116 2011-08-29 17:20:37Z ghudson $
+ * $Id$
  */
 
 OM_uint32 KRB5_CALLCONV

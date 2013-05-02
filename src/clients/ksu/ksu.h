@@ -55,12 +55,8 @@
 
 #define CHUNK 3
 #define CACHE_MODE 0600
-#define MAX_CMD 2048 /* this is temp, should use realloc instead,          
-			as done in most of the code */       
-
-#ifndef MAXPATHLEN
-# define MAXPATHLEN 4096
-#endif		      
+#define MAX_CMD 2048 /* this is temp, should use realloc instead,
+                        as done in most of the code */
 
 
 extern int optind;

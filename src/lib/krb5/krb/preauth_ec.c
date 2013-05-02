@@ -40,6 +40,17 @@ ec_flags(krb5_context context, krb5_preauthtype pa_type)
 }
 
 static krb5_error_code
+ec_prep_questions(krb5_context context, krb5_clpreauth_moddata moddata,
+                  krb5_clpreauth_modreq modreq, krb5_get_init_creds_opt *opt,
+                  krb5_clpreauth_callbacks cb, krb5_clpreauth_rock rock,
+                  krb5_kdc_req *request, krb5_data *encoded_request_body,
+                  krb5_data *encoded_previous_request, krb5_pa_data *pa_data)
+{
+    cb->need_as_key(context, rock);
+    return 0;
+}
+
+static krb5_error_code
 ec_process(krb5_context context, krb5_clpreauth_moddata moddata,
            krb5_clpreauth_modreq modreq, krb5_get_init_creds_opt *opt,
            krb5_clpreauth_callbacks cb,
@@ -92,7 +103,10 @@ ec_process(krb5_context context, krb5_clpreauth_moddata moddata,
         krb5_data *encoded_ts = NULL;
         krb5_pa_enc_ts ts;
         enc.ciphertext.data = NULL;
-        retval = krb5_us_timeofday(context, &ts.patimestamp, &ts.pausec);
+        /* Use the timestamp from the preauth-required error if possible.
+         * This time should always be secured by the FAST channel. */
+        retval = cb->get_preauth_time(context, rock, FALSE, &ts.patimestamp,
+                                      &ts.pausec);
         if (retval == 0)
             retval = encode_krb5_pa_enc_ts(&ts, &encoded_ts);
         if (retval == 0)
@@ -153,6 +167,7 @@ clpreauth_encrypted_challenge_initvt(krb5_context context, int maj_ver,
     vt->name = "encrypted_challenge";
     vt->pa_type_list = ec_types;
     vt->flags = ec_flags;
+    vt->prep_questions = ec_prep_questions;
     vt->process = ec_process;
     return 0;
 }

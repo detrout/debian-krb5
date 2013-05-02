@@ -31,6 +31,7 @@
  */
 
 #include    <errno.h>
+#include    <locale.h>
 #include    <stdio.h>
 #include    <signal.h>
 #include    <syslog.h>
@@ -68,8 +69,6 @@ extern int daemon(int, int);
 gss_name_t gss_changepw_name = NULL, gss_oldchangepw_name = NULL;
 gss_name_t gss_kadmin_name = NULL;
 void *global_server_handle;
-
-extern krb5_keylist_node  *master_keylist;
 
 char *build_princ_name(char *name, char *realm);
 void log_badauth(OM_uint32 major, OM_uint32 minor,
@@ -109,7 +108,8 @@ static void usage()
 {
     fprintf(stderr, _("Usage: kadmind [-x db_args]* [-r realm] [-m] [-nofork] "
                       "[-port port-number]\n"
-                      "\t\t[-P pid_file]\n"
+                      "\t\t[-p path-to-kdb5_util] [-F dump-file]\n"
+                      "\t\t[-K path-to-kprop] [-P pid_file]\n"
                       "\nwhere,\n\t[-x db_args]* - any number of database "
                       "specific arguments.\n"
                       "\t\t\tLook at each database documentation for "
@@ -204,6 +204,9 @@ static krb5_context context;
 static krb5_context hctx;
 
 int nofork = 0;
+char *kdb5_util = KPROPD_DEFAULT_KDB5_UTIL;
+char *kprop = KPROPD_DEFAULT_KPROP;
+char *dump_file = KPROP_DEFAULT_FILE;
 
 int main(int argc, char *argv[])
 {
@@ -228,7 +231,7 @@ int main(int argc, char *argv[])
 
     verto_ctx *ctx;
 
-    setlocale(LC_MESSAGES, "");
+    setlocale(LC_ALL, "");
     setvbuf(stderr, NULL, _IONBF, 0);
 
     /* This is OID value the Krb5_Name NameType */
@@ -300,6 +303,21 @@ int main(int argc, char *argv[])
             pid_file = *argv;
         } else if (strcmp(*argv, "-W") == 0) {
             strong_random = 0;
+        } else if (strcmp(*argv, "-p") == 0) {
+            argc--; argv++;
+            if (!argc)
+                usage();
+            kdb5_util = *argv;
+        } else if (strcmp(*argv, "-F") == 0) {
+            argc--; argv++;
+            if (!argc)
+                usage();
+            dump_file = *argv;
+        } else if (strcmp(*argv, "-K") == 0) {
+            argc--; argv++;
+            if (!argc)
+                usage();
+            kprop = *argv;
         } else
             break;
         argc--; argv++;
@@ -319,7 +337,7 @@ int main(int argc, char *argv[])
     if((ret = kadm5_init(context, "kadmind", NULL,
                          NULL, &params,
                          KADM5_STRUCT_VERSION,
-                         KADM5_API_VERSION_3,
+                         KADM5_API_VERSION_4,
                          db_args,
                          &global_server_handle)) != KADM5_OK) {
         const char *e_txt = krb5_get_error_message (context, ret);

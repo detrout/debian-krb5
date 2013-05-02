@@ -43,8 +43,7 @@
 
 #define FAKECERT
 
-const krb5_octet_data
-dh_oid = { 0, 7, (unsigned char *)"\x2A\x86\x48\xce\x3e\x02\x01" };
+const krb5_data dh_oid = { 0, 7, "\x2A\x86\x48\xce\x3e\x02\x01" };
 
 
 krb5_error_code
@@ -127,9 +126,6 @@ free_krb5_pa_pk_as_req_draft9(krb5_pa_pk_as_req_draft9 **in)
     if (*in == NULL) return;
     free((*in)->signedAuthPack.data);
     free((*in)->kdcCert.data);
-    free((*in)->encryptionCert.data);
-    if ((*in)->trustedCertifiers != NULL)
-        free_krb5_trusted_ca(&(*in)->trustedCertifiers);
     free(*in);
 }
 
@@ -164,10 +160,10 @@ free_krb5_auth_pack(krb5_auth_pack **in)
     if ((*in)->supportedCMSTypes != NULL)
         free_krb5_algorithm_identifiers(&((*in)->supportedCMSTypes));
     if ((*in)->supportedKDFs) {
-        krb5_octet_data **supportedKDFs = (*in)->supportedKDFs;
+        krb5_data **supportedKDFs = (*in)->supportedKDFs;
         unsigned i;
         for (i = 0; supportedKDFs[i]; i++)
-            krb5_free_octet_data(NULL, supportedKDFs[i]);
+            krb5_free_data(NULL, supportedKDFs[i]);
         free(supportedKDFs);
     }
     free(*in);
@@ -188,7 +184,7 @@ free_krb5_pa_pk_as_rep(krb5_pa_pk_as_rep **in)
     if (*in == NULL) return;
     switch ((*in)->choice) {
     case choice_pa_pk_as_rep_dhInfo:
-        krb5_free_octet_data(NULL, (*in)->u.dh_Info.kdfID);
+        krb5_free_data(NULL, (*in)->u.dh_Info.kdfID);
         free((*in)->u.dh_Info.dhSignedData.data);
         break;
     case choice_pa_pk_as_rep_encKeyPack:
@@ -217,43 +213,6 @@ free_krb5_external_principal_identifier(krb5_external_principal_identifier ***in
         free((*in)[i]->subjectName.data);
         free((*in)[i]->issuerAndSerialNumber.data);
         free((*in)[i]->subjectKeyIdentifier.data);
-        free((*in)[i]);
-        i++;
-    }
-    free(*in);
-}
-
-void
-free_krb5_trusted_ca(krb5_trusted_ca ***in)
-{
-    int i = 0;
-    if (*in == NULL) return;
-    while ((*in)[i] != NULL) {
-        switch((*in)[i]->choice) {
-        case choice_trusted_cas_principalName:
-            break;
-        case choice_trusted_cas_caName:
-            free((*in)[i]->u.caName.data);
-            break;
-        case choice_trusted_cas_issuerAndSerial:
-            free((*in)[i]->u.issuerAndSerial.data);
-            break;
-        case choice_trusted_cas_UNKNOWN:
-            break;
-        }
-        free((*in)[i]);
-        i++;
-    }
-    free(*in);
-}
-
-void
-free_krb5_typed_data(krb5_typed_data ***in)
-{
-    int i = 0;
-    if (*in == NULL) return;
-    while ((*in)[i] != NULL) {
-        free((*in)[i]->data);
         free((*in)[i]);
         i++;
     }
@@ -318,11 +277,8 @@ init_krb5_pa_pk_as_req_draft9(krb5_pa_pk_as_req_draft9 **in)
     if ((*in) == NULL) return;
     (*in)->signedAuthPack.data = NULL;
     (*in)->signedAuthPack.length = 0;
-    (*in)->trustedCertifiers = NULL;
     (*in)->kdcCert.data = NULL;
     (*in)->kdcCert.length = 0;
-    (*in)->encryptionCert.data = NULL;
-    (*in)->encryptionCert.length = 0;
 }
 
 void
@@ -403,7 +359,7 @@ init_krb5_subject_pk_info(krb5_subject_pk_info **in)
 }
 
 krb5_error_code
-pkinit_copy_krb5_octet_data(krb5_octet_data *dst, const krb5_octet_data *src)
+pkinit_copy_krb5_data(krb5_data *dst, const krb5_data *src)
 {
     if (dst == NULL || src == NULL)
         return EINVAL;

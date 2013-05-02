@@ -69,7 +69,7 @@
 
 /* This version will be incremented when incompatible changes are made to the
  * KDB API, and will be kept in sync with the libkdb major version. */
-#define KRB5_KDB_API_VERSION 6
+#define KRB5_KDB_API_VERSION 7
 
 /* Salt types */
 #define KRB5_KDB_SALTTYPE_NORMAL        0
@@ -130,6 +130,9 @@
 
 #define KRB5_KDB_FLAGS_S4U                      ( KRB5_KDB_FLAG_PROTOCOL_TRANSITION | \
                                                   KRB5_KDB_FLAG_CONSTRAINED_DELEGATION )
+
+/* String attribute names recognized by krb5 */
+#define KRB5_KDB_SK_SESSION_ENCTYPES            "session_enctypes"
 
 #if !defined(_WIN32)
 
@@ -217,6 +220,13 @@ typedef struct _osa_policy_ent_t {
     krb5_ui_4       pw_max_fail;                /* pwdMaxFailure */
     krb5_ui_4       pw_failcnt_interval;        /* pwdFailureCountInterval */
     krb5_ui_4       pw_lockout_duration;        /* pwdLockoutDuration */
+    /* Only valid if version > 2 */
+    krb5_ui_4       attributes;
+    krb5_ui_4       max_life;
+    krb5_ui_4       max_renewable_life;
+    char          * allowed_keysalts;
+    krb5_int16      n_tl_data;
+    krb5_tl_data  * tl_data;
 } osa_policy_ent_rec, *osa_policy_ent_t;
 
 typedef       void    (*osa_adb_iter_policy_func) (void *, osa_policy_ent_t);
@@ -228,6 +238,8 @@ typedef struct __krb5_key_salt_tuple {
 
 #define KRB5_KDB_MAGIC_NUMBER           0xdbdbdbdb
 #define KRB5_KDB_V1_BASE_LENGTH         38
+
+#define KRB5_KDB_MAX_ALLOWED_KS_LEN     512
 
 #define KRB5_TL_LAST_PWD_CHANGE         0x0001
 #define KRB5_TL_MOD_PRINC               0x0002
@@ -336,7 +348,6 @@ extern char *krb5_mkey_pwd_prompt2;
 
 #define KRB5_DB_LOCKMODE_SHARED       0x0001
 #define KRB5_DB_LOCKMODE_EXCLUSIVE    0x0002
-#define KRB5_DB_LOCKMODE_DONTBLOCK    0x0004
 #define KRB5_DB_LOCKMODE_PERMANENT    0x0008
 
 /* libkdb.spec */
@@ -377,7 +388,6 @@ krb5_error_code krb5_db_store_master_key  ( krb5_context kcontext,
 krb5_error_code krb5_db_store_master_key_list  ( krb5_context kcontext,
                                                  char *keyfile,
                                                  krb5_principal mname,
-                                                 krb5_keylist_node *keylist,
                                                  char *master_pwd);
 krb5_error_code krb5_db_fetch_mkey  ( krb5_context   context,
                                       krb5_principal mname,
@@ -391,15 +401,7 @@ krb5_error_code krb5_db_fetch_mkey  ( krb5_context   context,
 krb5_error_code
 krb5_db_fetch_mkey_list( krb5_context    context,
                          krb5_principal  mname,
-                         const krb5_keyblock * mkey,
-                         krb5_kvno             mkvno,
-                         krb5_keylist_node  **mkeys_list );
-/**
- * Free a master keylist.
- */
-void
-krb5_db_free_mkey_list( krb5_context         context,
-                        krb5_keylist_node  *mkey_list );
+                         const krb5_keyblock * mkey );
 
 krb5_error_code
 krb5_dbe_find_enctype( krb5_context     kcontext,
@@ -451,14 +453,12 @@ krb5_dbe_fetch_act_key_list(krb5_context          context,
 
 krb5_error_code
 krb5_dbe_find_act_mkey( krb5_context          context,
-                        krb5_keylist_node   * mkey_list,
                         krb5_actkvno_node   * act_mkey_list,
                         krb5_kvno           * act_kvno,
                         krb5_keyblock      ** act_mkey);
 
 krb5_error_code
 krb5_dbe_find_mkey( krb5_context         context,
-                    krb5_keylist_node * mkey_list,
                     krb5_db_entry      * entry,
                     krb5_keyblock      ** mkey);
 
@@ -468,11 +468,13 @@ krb5_dbe_lookup_mkvno( krb5_context    context,
                        krb5_db_entry * entry,
                        krb5_kvno     * mkvno);
 
+krb5_keylist_node *
+krb5_db_mkey_list_alias( krb5_context kcontext );
+
 /* Set *mkvno to mkvno in entry tl_data, or minimum value from mkey_list. */
 krb5_error_code
 krb5_dbe_get_mkvno( krb5_context        context,
                     krb5_db_entry     * entry,
-                    krb5_keylist_node * mkey_list,
                     krb5_kvno         * mkvno);
 
 krb5_error_code
@@ -572,9 +574,21 @@ krb5_dbe_delete_tl_data( krb5_context    context,
                          krb5_int16      tl_data_type);
 
 krb5_error_code
+krb5_db_update_tl_data(krb5_context          context,
+                       krb5_int16          * n_tl_datap,
+                       krb5_tl_data        **tl_datap,
+                       krb5_tl_data        * new_tl_data);
+
+krb5_error_code
 krb5_dbe_update_tl_data( krb5_context          context,
                          krb5_db_entry       * entry,
                          krb5_tl_data        * new_tl_data);
+
+/* Compute the salt for a key data entry given the corresponding principal. */
+krb5_error_code
+krb5_dbe_compute_salt(krb5_context context, const krb5_key_data *key,
+                      krb5_const_principal princ, krb5_int16 *salttype_out,
+                      krb5_data **salt_out);
 
 krb5_error_code
 krb5_dbe_cpw( krb5_context        kcontext,
@@ -692,7 +706,6 @@ krb5_error_code
 krb5_def_fetch_mkey_list( krb5_context            context,
                           krb5_principal        mprinc,
                           const krb5_keyblock  *mkey,
-                          krb5_kvno             mkvno,
                           krb5_keylist_node  **mkeys_list);
 
 krb5_error_code
@@ -796,7 +809,7 @@ krb5_dbe_free_string(krb5_context, char *);
  * This number indicates the date of the last incompatible change to the DAL.
  * The maj_ver field of the module's vtable structure must match this version.
  */
-#define KRB5_KDB_DAL_MAJOR_VERSION 3
+#define KRB5_KDB_DAL_MAJOR_VERSION 4
 
 /*
  * A krb5_context can hold one database object.  Modules should use
@@ -888,7 +901,6 @@ typedef struct _kdb_vftabl {
      * KRB5_DB_LOCKMODE_SHARED: Lock may coexist with other shared locks.
      * KRB5_DB_LOCKMODE_EXCLUSIVE: Lock may not coexist with other locks.
      * KRB5_DB_LOCKMODE_PERMANENT: Exclusive lock surviving process exit.
-     * (KRB5_DB_LOCKMODE_DONTBLOCK is unused and unimplemented.)
      *
      * Used by the "kadmin lock" command, incremental propagation, and
      * kdb5_util dump.  Incremental propagation support requires shared locks
@@ -1086,7 +1098,6 @@ typedef struct _kdb_vftabl {
     krb5_error_code (*fetch_master_key_list)(krb5_context kcontext,
                                              krb5_principal mname,
                                              const krb5_keyblock *key,
-                                             krb5_kvno kvno,
                                              krb5_keylist_node **mkeys_list);
 
     /*

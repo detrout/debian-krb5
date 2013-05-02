@@ -1,7 +1,7 @@
 #!/usr/bin/python
 from k5test import *
 
-realm = K5Realm(create_host=False, start_kadmind=False)
+realm = K5Realm(create_host=False)
 
 realm.addprinc('alice', password('alice'))
 realm.addprinc('bob', password('bob'))
@@ -11,7 +11,6 @@ dccname = 'DIR:%s' % ccdir
 duser = 'DIR::%s/tkt1' % ccdir
 dalice = 'DIR::%s/tkt2' % ccdir
 dbob = 'DIR::%s/tkt3' % ccdir
-os.mkdir(ccdir)
 realm.kinit('user', password('user'), flags=['-c', duser])
 realm.kinit('alice', password('alice'), flags=['-c', dalice])
 realm.kinit('bob', password('bob'), flags=['-c', dbob])
@@ -37,8 +36,15 @@ mbar = 'MEMORY:bar'
 cursor_test('filemem', [fccname, mfoo, mbar], [fccname, mfoo, mbar])
 cursor_test('dirmem', [dccname, mfoo], [duser, dalice, dbob, mfoo])
 
+# Test krb5_cccol_have_content.
+realm.run_as_client(['./t_cccursor', dccname, 'CONTENT'])
+realm.run_as_client(['./t_cccursor', fccname, 'CONTENT'])
+realm.run_as_client(['./t_cccursor', realm.ccache, 'CONTENT'])
+realm.run_as_client(['./t_cccursor', mfoo, 'CONTENT'], expected_code=1)
+
 # Make sure FILE doesn't yield a nonexistent default cache.
 realm.run_as_client([kdestroy])
 cursor_test('noexist', [], [])
+realm.run_as_client(['./t_cccursor', fccname, 'CONTENT'], expected_code=1)
 
-success('Renewing credentials.')
+success('Renewing credentials')

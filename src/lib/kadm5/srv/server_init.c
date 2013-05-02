@@ -2,7 +2,7 @@
 /*
  * Copyright 1993 OpenVision Technologies, Inc., All Rights Reserved.
  *
- * $Id: server_init.c 25141 2011-09-04 23:52:11Z raeburn $
+ * $Id$
  * $Source$
  */
 /*
@@ -283,7 +283,7 @@ kadm5_ret_t kadm5_init(krb5_context context, char *client_name, char *pass,
         return ENOMEM;
     }
     *handle->lhandle = *handle;
-    handle->lhandle->api_version = KADM5_API_VERSION_3;
+    handle->lhandle->api_version = KADM5_API_VERSION_4;
     handle->lhandle->struct_version = KADM5_STRUCT_VERSION;
     handle->lhandle->lhandle = handle->lhandle;
 

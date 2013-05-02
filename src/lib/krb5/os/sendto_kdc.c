@@ -523,6 +523,10 @@ cm_select_or_poll(const struct select_state *in, struct select_state *out,
             return e;
         timeout = (in->end_time.tv_sec - now.tv_sec) * 1000 +
             (in->end_time.tv_usec - now.tv_usec) / 1000;
+        if (timeout < 0) {
+            *sret = 0;
+            return 0;
+        }
     }
     /* We don't need a separate copy of the selstate for poll, but use one
      * anyone for consistency with the select wrapper. */
@@ -1287,7 +1291,7 @@ k5_sendto(krb5_context context, const krb5_data *message,
             continue;
         if (maybe_send(context, state, sel_state, callback_info))
             continue;
-        done = service_fds(context, sel_state, 1, state, seltemp, msg_handler,
+        done = service_fds(context, sel_state, 1, conns, seltemp, msg_handler,
                            msg_handler_data, &winner);
     }
 

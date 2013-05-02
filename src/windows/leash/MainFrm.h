@@ -33,14 +33,22 @@ private:
     CDialog m_MainFrameOwner;
 
 protected: // create from serialization only
+    // Ribbon bar for the application
+    CMFCRibbonBar m_wndRibbonBar;
+    // Our own custom application button we can keep hidden.
+    CMFCRibbonApplicationButton m_wndApplicationButton;
+
+
 	CMainFrame();
 	DECLARE_DYNCREATE(CMainFrame)
 
 // Attributes
 public:
 	static int         m_whatSide;
-    static CStatusBar  m_wndStatusBar;
-	static CToolBar    m_wndToolBar;
+#ifndef NO_STATUS_BAR
+    static CMFCStatusBar  m_wndStatusBar;
+#endif
+	static CMFCToolBar    m_wndToolBar;
 	static BOOL		   m_isMinimum;
     static BOOL        m_isBeingResized;
     static CImageList  m_imageList;

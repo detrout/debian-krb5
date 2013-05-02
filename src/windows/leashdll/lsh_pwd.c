@@ -38,6 +38,11 @@
 #endif /* NO_KRB5 */
 #include <commctrl.h>
 
+extern void * Leash_pec_create(HWND hEditCtl);
+extern void Leash_pec_destroy(void *pAutoComplete);
+extern void Leash_pec_add_principal(char *principal);
+extern void Leash_pec_clear_history(void *pec);
+
 /* Global Variables. */
 static long lsh_errno;
 static char *err_context;       /* error context */
@@ -353,8 +358,6 @@ int Leash_kinit_dlg_ex(HWND hParent, LPLSH_DLGINFO_EX lpdlginfo)
         CloseHandle(hMutex);
         return 1;   /* pretend the dialog was displayed and succeeded */
     }
-
-    lpdlginfo->dlgtype = DLGTYPE_PASSWD;
 
     /* set the help file */
     Leash_set_help_file(NULL);
@@ -1064,157 +1067,6 @@ GetKrb4RealmFile(
     return FALSE;
 }
 
-static BOOL
-FindDLLName(CHAR * filename, UINT len)
-{
-    if ( !filename || len == 0 )
-        return 0;
-
-    filename[0] = 0;
-
-    if ( pEnumProcessModules ) {
-        char checkName[1024];
-        HMODULE hMods[1024];
-        HANDLE hProcess;
-        DWORD cbNeeded;
-        unsigned int i;
-
-        /* Get a list of all the modules in this process. */
-        hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, GetCurrentProcessId());
-
-        if (pEnumProcessModules(hProcess, hMods, sizeof(hMods), &cbNeeded))
-        {
-            for (i = 0; i < (cbNeeded / sizeof(HMODULE)); i++)
-            {
-                char szModName[2048];
-
-                /* Get the full path to the module's file. */
-                if (pGetModuleFileNameEx(hProcess, hMods[i], szModName, sizeof(szModName)))
-                {
-                    lstrcpyn(checkName, szModName, sizeof(checkName));
-                    strupr(checkName);
-
-                    if (strstr(checkName, "LEASHW32")) {
-                        lstrcpyn(filename, checkName, len);
-                        break;
-                    }
-                }
-            }
-        }
-
-        CloseHandle(hProcess);
-    } else if (pCreateToolhelp32Snapshot && pModule32First && pModule32Next ) {
-        char checkName[1024];
-        MODULEENTRY32 me32 = {0};
-        HANDLE hProcessSnap = NULL;
-
-        hProcessSnap = pCreateToolhelp32Snapshot(TH32CS_SNAPMODULE, GetCurrentProcessId());
-        if (hProcessSnap == (HANDLE)-1)
-            return FALSE;
-
-        me32.dwSize = sizeof(MODULEENTRY32);
-        if (pModule32First(hProcessSnap, &me32))
-        {
-            do
-            {
-                lstrcpyn(checkName, me32.szExePath, sizeof(checkName));
-                strupr(checkName);
-
-                if (strstr(checkName, "LEASHW32")) {
-                    lstrcpyn(filename, checkName, len);
-                    break;
-                }
-            }
-            while (pModule32Next(hProcessSnap, &me32));
-        }
-    }
-
-    return filename[0] ? 1 : 0;
-}
-
-static DWORD
-SetVersionInfo(
-    HWND hDialog,
-    UINT id_version,
-    UINT id_copyright
-    )
-{
-    CHAR filename[1024];
-    DWORD dwVersionHandle;
-    LPVOID pVersionInfo = 0;
-    DWORD retval = 0;
-    LPDWORD pLangInfo = 0;
-    LPTSTR szVersion = 0;
-    LPTSTR szCopyright = 0;
-    UINT len = 0;
-    CHAR sname_version[] = "FileVersion";
-    CHAR sname_copyright[] = "LegalCopyright";
-    CHAR szVerQ[(sizeof("\\StringFileInfo\\12345678\\") +
-                  max(sizeof(sname_version) / sizeof(CHAR),
-                      sizeof(sname_copyright) / sizeof(CHAR)))];
-    CHAR szVerCopy[128] = "";
-    CHAR * cp = szVerQ;
-    DWORD size;
-
-    if (!FindDLLName(filename, sizeof(filename)))
-        return GetLastError();
-
-    size = GetFileVersionInfoSize(filename, &dwVersionHandle);
-
-    if (!size)
-        return GetLastError();
-
-    pVersionInfo = malloc(size);
-    if (!pVersionInfo)
-        return ERROR_NOT_ENOUGH_MEMORY;
-
-    if (!GetFileVersionInfo(filename, dwVersionHandle, size, pVersionInfo))
-    {
-        retval = GetLastError();
-        goto cleanup;
-    }
-
-    if (!VerQueryValue(pVersionInfo, "\\VarFileInfo\\Translation",
-                       (LPVOID*)&pLangInfo, &len))
-    {
-        retval = GetLastError();
-        goto cleanup;
-    }
-
-
-    cp += wsprintf(szVerQ,
-                   "\\StringFileInfo\\%04x%04x\\",
-                   LOWORD(*pLangInfo), HIWORD(*pLangInfo));
-
-    lstrcpy(cp, sname_version);
-    if (!VerQueryValue(pVersionInfo, szVerQ, (LPVOID*)&szVersion, &len))
-    {
-        retval = GetLastError() || ERROR_NOT_ENOUGH_MEMORY;
-        goto cleanup;
-    }
-
-    lstrcpy(cp, sname_copyright);
-    if (!VerQueryValue(pVersionInfo, szVerQ, (LPVOID*)&szCopyright, &len))
-    {
-        retval = GetLastError() || ERROR_NOT_ENOUGH_MEMORY;
-        goto cleanup;
-    }
-
-    if ( strlen(szVersion) < sizeof(szVerCopy) - 8 ) {
-        wsprintf(szVerCopy, "Version %s", szVersion);
-        szVerCopy[sizeof(szVerCopy) - 1] = 0;
-
-        SetWindowText(GetDlgItem(hDialog,id_version),szVerCopy);
-    }
-    SetWindowText(GetDlgItem(hDialog,id_copyright),szCopyright);
-
- cleanup:
-    if (pVersionInfo)
-        free(pVersionInfo);
-    return retval;
-}
-
-
 int
 readstring(FILE * file, char * buf, int len)
 {
@@ -1428,6 +1280,7 @@ AdjustOptions(HWND hDialog, int show, int hideDiff)
     ShowWindow(GetDlgItem(hDialog,IDC_CHECK_NOADDRESS),show);
     ShowWindow(GetDlgItem(hDialog,IDC_CHECK_RENEWABLE),show);
     ShowWindow(GetDlgItem(hDialog,IDC_STATIC_KRB5),show);
+    ShowWindow(GetDlgItem(hDialog,IDC_BUTTON_CLEAR_HISTORY),show);
 
     GetWindowRect( hDialog, &dlgRect );
     diff = dlgRect.top + GetSystemMetrics(SM_CYCAPTION)
@@ -1453,10 +1306,10 @@ AdjustOptions(HWND hDialog, int show, int hideDiff)
                  dlgRect.bottom-dlgRect.top+(show ? 1 : - 1) * hideDiff,
                  SWP_NOZORDER|SWP_NOMOVE);
 
-    CSetDlgItemText(hDialog, IDC_BUTTON_OPTIONS, show ? "Hide Options" : "Show Options");
+    CSetDlgItemText(hDialog, IDC_BUTTON_OPTIONS,
+                    show ? "Hide Advanced" : "Show Advanced");
 
 }
-
 
 /* Callback function for the Authentication Dialog box that initializes and
    renews tickets. */
@@ -1471,8 +1324,7 @@ AuthenticateProc(
     )
 {
     static POINT Position = { -1, -1 };
-    static char username[LEASH_USERNAME_SZ]="";
-    static char realm[LEASH_REALM_SZ]="";
+    static char principal[256]="";
     static char password[256]="";
     static int  lifetime=0;
     static int  renew_till=0;
@@ -1486,16 +1338,21 @@ AuthenticateProc(
     static HWND hSliderRenew=0;
     static RECT dlgRect;
     static int  hideDiff = 0;
-    char principal[256];
+    static void *pAutoComplete = 0;
     long realm_count = 0;
     int disable_noaddresses = 0;
+    HWND hEditCtrl=0;
+    HWND hFocusCtrl=0;
+    BOOL bReadOnlyPrinc=0;
 
     switch (message) {
 
     case WM_INITDIALOG:
 	hDlg = hDialog;
 
-        SetVersionInfo(hDialog,IDC_STATIC_VERSION,IDC_STATIC_COPYRIGHT);
+        hEditCtrl = GetDlgItem(hDialog, IDC_EDIT_PRINCIPAL);
+        if (hEditCtrl)
+            pAutoComplete = Leash_pec_create(hEditCtrl);
 	hSliderLifetime = GetDlgItem(hDialog, IDC_STATIC_LIFETIME_VALUE);
 	hSliderRenew = GetDlgItem(hDialog, IDC_STATIC_RENEW_TILL_VALUE);
 
@@ -1504,13 +1361,15 @@ AuthenticateProc(
 	if ((lpdi->size != LSH_DLGINFO_EX_V1_SZ &&
 	     lpdi->size != LSH_DLGINFO_EX_V2_SZ &&
 	      lpdi->size < LSH_DLGINFO_EX_V3_SZ) ||
-	     lpdi->dlgtype != DLGTYPE_PASSWD) {
+	     (lpdi->dlgtype & DLGTYPE_MASK) != DLGTYPE_PASSWD) {
 
 	    MessageBox(hDialog, "An incorrect initialization data structure was provided.",
 			"AuthenticateProc()",
 			MB_OK | MB_ICONSTOP);
 	    return FALSE;
 	}
+        bReadOnlyPrinc = (lpdi->dlgtype & DLGFLAG_READONLYPRINC) ?
+                         TRUE : FALSE;
 
         if ( lpdi->size >= LSH_DLGINFO_EX_V2_SZ ) {
             lpdi->out.username[0] = 0;
@@ -1526,16 +1385,6 @@ AuthenticateProc(
 	    SetWindowText(hDialog, lpdi->title);
 
         SetProp(hDialog, "HANDLES_HELP", (HANDLE)1);
-
-        if ( lpdi->size >= LSH_DLGINFO_EX_V3_SZ )
-            lstrcpy(username, lpdi->in.username);
-        else if (lpdi->username)
-            lstrcpy(username, lpdi->username);
-        if ( lpdi->size >= LSH_DLGINFO_EX_V3_SZ )
-	    lstrcpy(realm, lpdi->in.realm);
-	else if (lpdi->realm)
-	    lstrcpy(realm, lpdi->realm);
-
 	if (lpdi->use_defaults) {
 	    lifetime = Leash_get_default_lifetime();
 	    if (lifetime <= 0)
@@ -1566,110 +1415,21 @@ AuthenticateProc(
 	    proxiable = lpdi->proxiable;
 	    publicip = lpdi->publicip;
 	}
-
-        CSetDlgItemText(hDialog, IDC_EDIT_PRINCIPAL, username);
+        if (lpdi->username && (strlen(lpdi->username) > 0) &&
+            lpdi->realm && (strlen(lpdi->realm) > 0)) {
+            sprintf_s(principal, sizeof(principal), "%s@%s", lpdi->username,
+                      lpdi->realm);
+        } else {
+            principal[0] = 0;
+        }
+        Edit_SetReadOnly(hEditCtrl, bReadOnlyPrinc);
+        CSetDlgItemText(hDialog, IDC_EDIT_PRINCIPAL, principal);
         CSetDlgItemText(hDialog, IDC_EDIT_PASSWORD, "");
 
 #if 0  /* 20030619 - mjv wishes to return to the default character */
         /* echo spaces */
 	CSendDlgItemMessage(hDialog, IDC_EDIT_PASSWORD, EM_SETPASSWORDCHAR, 32, 0);
 #endif
-
-	/* Populate list of Realms */
-	CSendDlgItemMessage(hDialog, IDC_COMBO_REALM, CB_RESETCONTENT, 0, 0);
-	CSendDlgItemMessage(hDialog, IDC_COMBO_REALM, CB_LIMITTEXT, 192, 0);
-
-	if (pprofile_get_subsection_names && pprofile_free_list) {
-	    const char*  rootSection[] = {"realms", NULL};
-	    const char** rootsec = rootSection;
-	    char **sections = NULL, **cpp = NULL, *value = NULL;
-
-	    char krb5_conf[MAX_PATH+1];
-
-	    if (!GetProfileFile(krb5_conf,sizeof(krb5_conf))) {
-		profile_t profile;
-		long retval;
-		const char *filenames[2];
-
-		filenames[0] = krb5_conf;
-		filenames[1] = NULL;
-		retval = pprofile_init(filenames, &profile);
-		if (!retval) {
-		    retval = pprofile_get_subsection_names(profile,	rootsec, &sections);
-
-		    if (!retval)
-		    {
-			for (cpp = sections; *cpp; cpp++)
-			{
-			    CSendDlgItemMessage(hDialog, IDC_COMBO_REALM, CB_ADDSTRING, 0, (LPARAM)*cpp);
-			    realm_count++;
-			}
-		    }
-		    pprofile_free_list(sections);
-
-                    retval = pprofile_get_string(profile, "libdefaults","noaddresses", 0, "true", &value);
-                    if ( value ) {
-                        disable_noaddresses = config_boolean_to_int(value);
-                        pprofile_release_string(value);
-                    }
-
-		    pprofile_release(profile);
-		}
-	    }
-	} else {
-	    FILE * file;
-	    char krb_conf[MAX_PATH+1];
-	    char * p;
-
-	    if (!GetKrb4ConFile(krb_conf,sizeof(krb_conf)) &&
-		 (file = fopen(krb_conf, "rt")))
-	    {
-		char lineBuf[256];
-		// Skip the default realm
-		readstring(file,lineBuf,sizeof(lineBuf));
-
-		// Read the defined realms
-		while (TRUE)
-		{
-		    if (readstring(file,lineBuf,sizeof(lineBuf)) < 0)
-			break;
-
-		    if (*(lineBuf + strlen(lineBuf) - 1) == '\r')
-			*(lineBuf + strlen(lineBuf) - 1) = 0;
-
-		    for (p=lineBuf; *p ; p++)
-		    {
-			if (isspace(*p)) {
-			    *p = 0;
-			    break;
-			}
-		    }
-
-		    if ( strncmp(".KERBEROS.OPTION.",lineBuf,17) ) {
-			CSendDlgItemMessage(hDialog, IDC_COMBO_REALM, CB_ADDSTRING, 0, (LPARAM)lineBuf);
-			realm_count++;
-		    }
-		}
-
-		fclose(file);
-	    }
-	}
-	if (realm_count == 0)
-	    CSendDlgItemMessage(hDialog, IDC_COMBO_REALM, CB_ADDSTRING, 0, (LPARAM)realm);
-
-	/* Select the default Realm */
-	if (!realm[0] && hKrb5) {
-	    krb5_context ctx=0;
-	    char * def = 0;
-	    pkrb5_init_context(&ctx);
-	    pkrb5_get_default_realm(ctx,&def);
-	    if (def) {
-		lstrcpy(realm, def);
-		free(def);
-	    }
-	    pkrb5_free_context(ctx);
-	}
-	CSetDlgItemText(hDialog, IDC_COMBO_REALM, realm);
 
 	/* Set Lifetime Slider
 	*   min value = 5
@@ -1684,6 +1444,7 @@ AuthenticateProc(
 		     Leash_get_default_life_max(),
 		     lifetime );
 
+        CheckDlgButton(hDialog, IDC_CHECK_REMEMBER_PRINCIPAL, TRUE);
 	/* Set Forwardable checkbox */
 	CheckDlgButton(hDialog, IDC_CHECK_FORWARDABLE, forwardable);
 	/* Set NoAddress checkbox */
@@ -1744,9 +1505,11 @@ AuthenticateProc(
         /* Take keyboard focus */
         SetActiveWindow(hDialog);
         SetForegroundWindow(hDialog);
-        if (GetDlgCtrlID((HWND) wParam) != IDC_EDIT_PRINCIPAL)
-        {
-            SetFocus(GetDlgItem(hDialog, IDC_EDIT_PRINCIPAL));
+        /* put focus on password if princ is read-only */
+        hFocusCtrl = bReadOnlyPrinc ?
+            GetDlgItem(hDialog, IDC_EDIT_PASSWORD) : hEditCtrl;
+        if (((HWND)wParam) != hFocusCtrl) {
+            SetFocus(hFocusCtrl);
         }
         break;
 
@@ -1807,6 +1570,9 @@ AuthenticateProc(
 
 	    }
 	    break;
+    case IDC_BUTTON_CLEAR_HISTORY:
+        Leash_pec_clear_history(pAutoComplete);
+        break;
 	case IDC_CHECK_RENEWABLE:
 	    {
 		if (IsDlgButtonChecked(hDialog, IDC_CHECK_RENEWABLE)) {
@@ -1827,6 +1593,10 @@ AuthenticateProc(
 		CleanupSliders();
 		memset(password,0,sizeof(password));
 		RemoveProp(hDialog, "HANDLES_HELP");
+        if (pAutoComplete) {
+            Leash_pec_destroy(pAutoComplete);
+            pAutoComplete = NULL;
+        }
 		EndDialog(hDialog, (int)lParam);
                 return TRUE;
 	    }
@@ -1835,32 +1605,24 @@ AuthenticateProc(
 	    {
 		DWORD value = 0;
 
-		CGetDlgItemText(hDialog, IDC_EDIT_PRINCIPAL, username, sizeof(username));
+		CGetDlgItemText(hDialog, IDC_EDIT_PRINCIPAL, principal, sizeof(principal));
 		CGetDlgItemText(hDialog, IDC_EDIT_PASSWORD, password, sizeof(password));
-		CGetDlgItemText(hDialog, IDC_COMBO_REALM, realm, sizeof(realm));
 
-		if (!username[0])
-		{
+		if (!principal[0]) {
 		    MessageBox(hDialog,
-                                "You are not allowed to enter a blank username.",
-				"Invalid Principal",
-				MB_OK | MB_ICONSTOP);
+                       "You are not allowed to enter a blank principal.",
+                       "Invalid Principal",
+                       MB_OK | MB_ICONSTOP);
 		    return TRUE;
 		}
-		if (!realm[0])
-		{
-		    MessageBox(hDialog,
-                                "You are not allowed to enter a blank realm.",
-				"Invalid Principal",
-				MB_OK | MB_ICONSTOP);
-		    return TRUE;
-		}
-
+        // @TODO: parse realm portion and auto-uppercase
+/*
 		if (Leash_get_default_uppercaserealm())
 		{
 		    // found
 		    strupr(realm);
 		}
+*/
 
 		if (!password[0])
 		{
@@ -1873,7 +1635,8 @@ AuthenticateProc(
 
 		lifetime = NewSliderValue(hDialog, IDC_SLIDER_LIFETIME);
 
-		forwardable = IsDlgButtonChecked(hDialog, IDC_CHECK_FORWARDABLE);
+		forwardable = proxiable =
+                    IsDlgButtonChecked(hDialog, IDC_CHECK_FORWARDABLE);
 		noaddresses = IsDlgButtonChecked(hDialog, IDC_CHECK_NOADDRESS);
 		if (IsDlgButtonChecked(hDialog, IDC_CHECK_RENEWABLE)) {
 		    renew_till = NewSliderValue(hDialog, IDC_SLIDER_RENEWLIFE);
@@ -1881,7 +1644,6 @@ AuthenticateProc(
 		    renew_till= 0;
 		}
 
-		sprintf(principal,"%s@%s",username,realm);
 		lsh_errno = Leash_int_kinit_ex( 0,
 						hDialog,
 						principal, password, lifetime,
@@ -1949,13 +1711,16 @@ AuthenticateProc(
                     Leash_set_default_forwardable(forwardable);
                     Leash_set_default_noaddresses(noaddresses);
                 }
-
+/* @TODO: out username/realm
                 if ( lpdi->size >= LSH_DLGINFO_EX_V2_SZ ) {
                     strncpy(lpdi->out.username, username, LEASH_USERNAME_SZ);
                     lpdi->out.username[LEASH_USERNAME_SZ-1] = 0;
                     strncpy(lpdi->out.realm, realm, LEASH_REALM_SZ);
                     lpdi->out.realm[LEASH_REALM_SZ-1] = 0;
                 }
+*/
+                if (IsDlgButtonChecked(hDialog, IDC_CHECK_REMEMBER_PRINCIPAL))
+                    Leash_pec_add_principal(principal);
 
                 CloseMe(TRUE); /* success */
                 return FALSE;
@@ -1992,22 +1757,20 @@ NewPasswordProc(
     )
 {
     static POINT Position = { -1, -1 };
-    static char username[LEASH_USERNAME_SZ]="";
-    static char realm[LEASH_REALM_SZ]="";
     static char password[256]="";
     static char password2[256]="";
     static char password3[256]="";
     static LPLSH_DLGINFO_EX lpdi;
     static HWND hDlg=0;
+    static void *pAutoComplete = NULL;
     char principal[256];
     long realm_count = 0;
+    HWND hEditCtrl = NULL;
 
     switch (message) {
 
     case WM_INITDIALOG:
 	hDlg = hDialog;
-
-        SetVersionInfo(hDialog,IDC_STATIC_VERSION,IDC_STATIC_COPYRIGHT);
 
         *( (LPLSH_DLGINFO_EX far *)(&lpdi) ) = (LPLSH_DLGINFO_EX)(LPSTR)lParam;
 
@@ -2037,19 +1800,22 @@ NewPasswordProc(
 
         SetProp(hDialog, "HANDLES_HELP", (HANDLE)1);
 
-        if ( lpdi->size >= LSH_DLGINFO_EX_V3_SZ )
-            lstrcpy(username, lpdi->in.username);
-        else if (lpdi->username)
-            lstrcpy(username, lpdi->username);
-        if ( lpdi->size >= LSH_DLGINFO_EX_V3_SZ )
-	    lstrcpy(realm, lpdi->in.realm);
-	else if (lpdi->realm)
-	    lstrcpy(realm, lpdi->realm);
+        if (lpdi->username != NULL && (strlen(lpdi->username) > 0) &&
+            lpdi->realm != NULL && (strlen(lpdi->realm) > 0)) {
+            sprintf_s(principal,
+                      sizeof(principal), "%s@%s", lpdi->username, lpdi->realm);
+        } else {
+            principal[0] = 0;
+        }
 
-        CSetDlgItemText(hDialog, IDC_EDIT_PRINCIPAL, username);
+        CSetDlgItemText(hDialog, IDC_EDIT_PRINCIPAL, principal);
         CSetDlgItemText(hDialog, IDC_EDIT_PASSWORD, "");
         CSetDlgItemText(hDialog, IDC_EDIT_PASSWORD2, "");
         CSetDlgItemText(hDialog, IDC_EDIT_PASSWORD3, "");
+
+        hEditCtrl = GetDlgItem(hDialog, IDC_EDIT_PRINCIPAL);
+        if (hEditCtrl)
+            pAutoComplete = Leash_pec_create(hEditCtrl);
 
 #if 0  /* 20030619 - mjv wishes to return to the default character */
 	/* echo spaces */
@@ -2057,96 +1823,6 @@ NewPasswordProc(
 	CSendDlgItemMessage(hDialog, IDC_EDIT_PASSWORD2, EM_SETPASSWORDCHAR, 32, 0);
 	CSendDlgItemMessage(hDialog, IDC_EDIT_PASSWORD3, EM_SETPASSWORDCHAR, 32, 0);
 #endif
-
-	/* Populate list of Realms */
-	CSendDlgItemMessage(hDialog, IDC_COMBO_REALM, CB_RESETCONTENT, 0, 0);
-	CSendDlgItemMessage(hDialog, IDC_COMBO_REALM, CB_LIMITTEXT, 192, 0);
-
-	if (pprofile_get_subsection_names && pprofile_free_list) {
-	    const char*  rootSection[] = {"realms", NULL};
-	    const char** rootsec = rootSection;
-	    char **sections = NULL, **cpp = NULL, *value = NULL;
-
-	    char krb5_conf[MAX_PATH+1];
-
-	    if (!GetProfileFile(krb5_conf,sizeof(krb5_conf))) {
-		profile_t profile;
-		long retval;
-		const char *filenames[2];
-
-		filenames[0] = krb5_conf;
-		filenames[1] = NULL;
-		retval = pprofile_init(filenames, &profile);
-		if (!retval) {
-		    retval = pprofile_get_subsection_names(profile,	rootsec, &sections);
-
-		    if (!retval)
-		    {
-			for (cpp = sections; *cpp; cpp++)
-			{
-			    CSendDlgItemMessage(hDialog, IDC_COMBO_REALM, CB_ADDSTRING, 0, (LPARAM)*cpp);
-			    realm_count++;
-			}
-		    }
-		    pprofile_free_list(sections);
-		    pprofile_release(profile);
-		}
-	    }
-	} else {
-	    FILE * file;
-	    char krb_conf[MAX_PATH+1];
-	    char * p;
-
-	    if (!GetKrb4ConFile(krb_conf,sizeof(krb_conf)) &&
-		 (file = fopen(krb_conf, "rt")))
-	    {
-		char lineBuf[256];
-		// Skip the default realm
-		readstring(file,lineBuf,sizeof(lineBuf));
-
-		// Read the defined realms
-		while (TRUE)
-		{
-		    if (readstring(file,lineBuf,sizeof(lineBuf)) < 0)
-			break;
-
-		    if (*(lineBuf + strlen(lineBuf) - 1) == '\r')
-			*(lineBuf + strlen(lineBuf) - 1) = 0;
-
-		    for (p=lineBuf; *p ; p++)
-		    {
-			if (isspace(*p)) {
-			    *p = 0;
-			    break;
-			}
-		    }
-
-		    if ( strncmp(".KERBEROS.OPTION.",lineBuf,17) ) {
-			CSendDlgItemMessage(hDialog, IDC_COMBO_REALM, CB_ADDSTRING, 0, (LPARAM)lineBuf);
-			realm_count++;
-		    }
-		}
-
-		fclose(file);
-	    }
-	}
-	if (realm_count == 0)
-	    CSendDlgItemMessage(hDialog, IDC_COMBO_REALM, CB_ADDSTRING, 0, (LPARAM)realm);
-
-	/* Select the default Realm */
-	if (!realm[0] && hKrb5) {
-	    krb5_context ctx=0;
-	    char * def = 0;
-	    pkrb5_init_context(&ctx);
-	    pkrb5_get_default_realm(ctx,&def);
-	    if (def) {
-		lstrcpy(realm, def);
-		free(def);
-	    }
-	    pkrb5_free_context(ctx);
-	}
-	CSetDlgItemText(hDialog, IDC_COMBO_REALM, realm);
-
         /* setup text of stuff. */
 
         if (Position.x > 0 && Position.y > 0 &&
@@ -2182,6 +1858,10 @@ NewPasswordProc(
 		memset(password3,0,sizeof(password3));
 		RemoveProp(hDialog, "HANDLES_HELP");
 		EndDialog(hDialog, (int)lParam);
+                if (pAutoComplete != NULL) {
+                    Leash_pec_destroy(pAutoComplete);
+                    pAutoComplete = NULL;
+                }
                 return TRUE;
 	    }
 	    break;
@@ -2191,33 +1871,18 @@ NewPasswordProc(
 		int i = 0;
                 int bit8 = 0;
 
-		CGetDlgItemText(hDialog, IDC_EDIT_PRINCIPAL, username, sizeof(username));
+		CGetDlgItemText(hDialog, IDC_EDIT_PRINCIPAL, principal, sizeof(principal));
 		CGetDlgItemText(hDialog, IDC_EDIT_PASSWORD, password, sizeof(password));
 		CGetDlgItemText(hDialog, IDC_EDIT_PASSWORD2, password2, sizeof(password2));
 		CGetDlgItemText(hDialog, IDC_EDIT_PASSWORD3, password3, sizeof(password3));
-		CGetDlgItemText(hDialog, IDC_COMBO_REALM, realm, sizeof(realm));
 
-		if (!username[0])
+		if (!principal[0])
 		{
 		    MessageBox(hDialog, "You are not allowed to enter a "
 				"blank username.",
 				"Invalid Principal",
 				MB_OK | MB_ICONSTOP);
 		    return TRUE;
-		}
-		if (!realm[0])
-		{
-		    MessageBox(hDialog, "You are not allowed to enter a "
-				"blank realm.",
-				"Invalid Principal",
-				MB_OK | MB_ICONSTOP);
-		    return TRUE;
-		}
-
-		if (Leash_get_default_uppercaserealm())
-		{
-		    // found
-		    strupr(realm);
 		}
 
 		if (!password[0] || !password2[0] || !password3[0])
@@ -2261,8 +1926,6 @@ NewPasswordProc(
                     return TRUE;
 		}
 
-		sprintf(principal,"%s@%s",username,realm);
-
                 lsh_errno = Leash_int_changepwd(principal, password, password2, 0, 1);
 		if (lsh_errno != 0)
 		{
@@ -2302,14 +1965,7 @@ NewPasswordProc(
 #endif /* COMMENT */
                     return TRUE;
 		}
-
-                if ( lpdi->size >= LSH_DLGINFO_EX_V2_SZ ) {
-                    strncpy(lpdi->out.username, username, LEASH_USERNAME_SZ);
-                    lpdi->out.username[LEASH_USERNAME_SZ-1] = 0;
-                    strncpy(lpdi->out.realm, realm, LEASH_REALM_SZ);
-                    lpdi->out.realm[LEASH_REALM_SZ-1] = 0;
-                }
-
+                Leash_pec_add_principal(principal);
                 CloseMe(TRUE); /* success */
 	    }
 	    break;

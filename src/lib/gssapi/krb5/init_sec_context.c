@@ -106,7 +106,7 @@
 #include <assert.h>
 
 /*
- * $Id: init_sec_context.c 25332 2011-10-14 14:40:10Z hartmans $
+ * $Id$
  */
 
 /* XXX This is for debugging only!!!  Should become a real bitfield
@@ -129,7 +129,6 @@ static krb5_error_code get_credentials(context, cred, server, now,
     krb5_error_code     code;
     krb5_creds          in_creds, evidence_creds, *result_creds = NULL;
     krb5_flags          flags = 0;
-    krb5_principal      cc_princ = NULL;
 
     *out_creds = NULL;
 
@@ -140,39 +139,32 @@ static krb5_error_code get_credentials(context, cred, server, now,
 
     assert(cred->name != NULL);
 
-    if ((code = krb5_cc_get_principal(context, cred->ccache, &cc_princ)))
-        goto cleanup;
-
     /*
      * Do constrained delegation if we have proxy credentials and
      * we're not trying to get a ticket to ourselves (in which case
      * we can just use the S4U2Self or evidence ticket directly).
      */
-    if (cred->proxy_cred &&
-        !krb5_principal_compare(context, cc_princ, server->princ)) {
+    if (cred->impersonator &&
+        !krb5_principal_compare(context, cred->impersonator, server->princ)) {
         krb5_creds mcreds;
 
-        flags |= KRB5_GC_CANONICALIZE |
-            KRB5_GC_NO_STORE |
-            KRB5_GC_CONSTRAINED_DELEGATION;
+        flags |= KRB5_GC_CANONICALIZE | KRB5_GC_CONSTRAINED_DELEGATION;
 
         memset(&mcreds, 0, sizeof(mcreds));
 
         mcreds.magic = KV5M_CREDS;
-        mcreds.times.endtime = cred->tgt_expire;
-        mcreds.server = cc_princ;
+        mcreds.server = cred->impersonator;
         mcreds.client = cred->name->princ;
 
         code = krb5_cc_retrieve_cred(context, cred->ccache,
-                                     KRB5_TC_MATCH_TIMES | KRB5_TC_MATCH_AUTHDATA,
-                                     &mcreds,
+                                     KRB5_TC_MATCH_AUTHDATA, &mcreds,
                                      &evidence_creds);
         if (code)
             goto cleanup;
 
         assert(evidence_creds.ticket_flags & TKT_FLG_FORWARDABLE);
 
-        in_creds.client = cc_princ;
+        in_creds.client = cred->impersonator;
         in_creds.second_ticket = evidence_creds.ticket;
     } else {
         in_creds.client = cred->name->princ;
@@ -202,32 +194,6 @@ static krb5_error_code get_credentials(context, cred, server, now,
 
     code = krb5_get_credentials(context, flags, cred->ccache,
                                 &in_creds, &result_creds);
-    if (code == KRB5_CC_NOTFOUND && cred->password.data != NULL &&
-        !cred->iakerb_mech) {
-        krb5_creds tgt_creds;
-
-        memset(&tgt_creds, 0, sizeof(tgt_creds));
-
-        /* No TGT in the ccache, but we can get one with the password. */
-        code = krb5_get_init_creds_password(context, &tgt_creds,
-                                            in_creds.client,
-                                            cred->password.data,
-                                            NULL, NULL,
-                                            0, NULL, NULL);
-        if (code)
-            goto cleanup;
-
-        code = krb5_cc_store_cred(context, cred->ccache, &tgt_creds);
-        if (code) {
-            krb5_free_cred_contents(context, &tgt_creds);
-            goto cleanup;
-        }
-        cred->tgt_expire = tgt_creds.times.endtime;
-        krb5_free_cred_contents(context, &tgt_creds);
-
-        code = krb5_get_credentials(context, flags, cred->ccache,
-                                    &in_creds, &result_creds);
-    }
     if (code)
         goto cleanup;
 
@@ -255,7 +221,6 @@ static krb5_error_code get_credentials(context, cred, server, now,
 
 cleanup:
     krb5_free_authdata(context, in_creds.authdata);
-    krb5_free_principal(context, cc_princ);
     krb5_free_cred_contents(context, &evidence_creds);
     krb5_free_creds(context, result_creds);
 
@@ -437,7 +402,7 @@ make_ap_req_v1(context, ctx, cred, k_cred, ad_context,
 
     /* compute the hash of the channel bindings */
 
-    if ((code = kg_checksum_channel_bindings(context, chan_bindings, &md5, 0)))
+    if ((code = kg_checksum_channel_bindings(context, chan_bindings, &md5)))
         return(code);
 
     krb5_auth_con_set_req_cksumtype(context, ctx->auth_context,
@@ -594,7 +559,6 @@ kg_new_connection(
                                       GSS_C_DCE_STYLE | GSS_C_IDENTIFY_FLAG |
                                       GSS_C_EXTENDED_ERROR_FLAG)));
     ctx->seed_init = 0;
-    ctx->big_endian = 0;  /* all initiators do little-endian, as per spec */
     ctx->seqstate = 0;
 
     if (req_flags & GSS_C_DCE_STYLE)
@@ -960,29 +924,6 @@ krb5_gss_init_sec_context_ext(
     if (actual_mech_type)
         *actual_mech_type = NULL;
 
-    /* verify the credential, or use the default */
-    /*SUPPRESS 29*/
-    if (claimant_cred_handle == GSS_C_NO_CREDENTIAL) {
-        major_status = kg_get_defcred(minor_status, &defcred);
-        if (major_status && GSS_ERROR(major_status)) {
-            if (*context_handle == GSS_C_NO_CONTEXT)
-                krb5_free_context(context);
-            return(major_status);
-        }
-        claimant_cred_handle = defcred;
-    }
-
-    major_status = kg_cred_resolve(minor_status, context, claimant_cred_handle,
-                                   target_name);
-    if (GSS_ERROR(major_status)) {
-        save_error_info(*minor_status, context);
-        krb5_gss_release_cred(&tmp_min_stat, &defcred);
-        if (*context_handle == GSS_C_NO_CONTEXT)
-            krb5_free_context(context);
-        return(major_status);
-    }
-    cred = (krb5_gss_cred_id_t)claimant_cred_handle;
-
     /* verify the mech_type */
 
     if (mech_type == GSS_C_NULL_OID || g_OID_equal(mech_type, gss_mech_krb5)) {
@@ -994,8 +935,6 @@ krb5_gss_init_sec_context_ext(
     } else if (g_OID_equal(mech_type, gss_mech_iakerb)) {
         mech_type = (gss_OID) gss_mech_iakerb;
     } else {
-        k5_mutex_unlock(&cred->lock);
-        krb5_gss_release_cred(minor_status, &defcred);
         *minor_status = 0;
         if (*context_handle == GSS_C_NO_CONTEXT)
             krb5_free_context(context);
@@ -1006,6 +945,29 @@ krb5_gss_init_sec_context_ext(
 
     /*SUPPRESS 29*/
     if (*context_handle == GSS_C_NO_CONTEXT) {
+        /* verify the credential, or use the default */
+        /*SUPPRESS 29*/
+        if (claimant_cred_handle == GSS_C_NO_CREDENTIAL) {
+            major_status = kg_get_defcred(minor_status, &defcred);
+            if (major_status && GSS_ERROR(major_status)) {
+                if (*context_handle == GSS_C_NO_CONTEXT)
+                    krb5_free_context(context);
+                return(major_status);
+            }
+            claimant_cred_handle = defcred;
+        }
+
+        major_status = kg_cred_resolve(minor_status, context,
+                                       claimant_cred_handle, target_name);
+        if (GSS_ERROR(major_status)) {
+            save_error_info(*minor_status, context);
+            krb5_gss_release_cred(&tmp_min_stat, &defcred);
+            if (*context_handle == GSS_C_NO_CONTEXT)
+                krb5_free_context(context);
+            return(major_status);
+        }
+        cred = (krb5_gss_cred_id_t)claimant_cred_handle;
+
         major_status = kg_new_connection(minor_status, cred, context_handle,
                                          target_name, mech_type, req_flags,
                                          time_req, input_chan_bindings,
@@ -1013,6 +975,7 @@ krb5_gss_init_sec_context_ext(
                                          output_token, ret_flags, time_rec,
                                          context, exts);
         k5_mutex_unlock(&cred->lock);
+        krb5_gss_release_cred(&tmp_min_stat, &defcred);
         if (*context_handle == GSS_C_NO_CONTEXT) {
             save_error_info (*minor_status, context);
             krb5_free_context(context);
@@ -1020,7 +983,6 @@ krb5_gss_init_sec_context_ext(
             ((krb5_gss_ctx_id_rec *) *context_handle)->k5_context = context;
     } else {
         /* mutual_auth doesn't care about the credentials */
-        k5_mutex_unlock(&cred->lock);
         major_status = mutual_auth(minor_status, context_handle,
                                    target_name, mech_type, req_flags,
                                    time_req, input_chan_bindings,
@@ -1032,7 +994,6 @@ krb5_gss_init_sec_context_ext(
            too.  */
     }
 
-    krb5_gss_release_cred(&tmp_min_stat, &defcred);
     return(major_status);
 }
 

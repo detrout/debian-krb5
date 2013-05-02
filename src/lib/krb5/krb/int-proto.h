@@ -27,6 +27,8 @@
 #ifndef KRB5_INT_FUNC_PROTO__
 #define KRB5_INT_FUNC_PROTO__
 
+struct krb5int_fast_request_state;
+
 krb5_error_code
 krb5int_tgtname(krb5_context context, const krb5_data *, const krb5_data *,
                 krb5_principal *);
@@ -62,6 +64,14 @@ clpreauth_encrypted_timestamp_initvt(krb5_context context, int maj_ver,
                                      int min_ver, krb5_plugin_vtable vtable);
 
 krb5_error_code
+clpreauth_sam2_initvt(krb5_context context, int maj_ver, int min_ver,
+                      krb5_plugin_vtable vtable);
+
+krb5_error_code
+clpreauth_otp_initvt(krb5_context context, int maj_ver, int min_ver,
+                     krb5_plugin_vtable vtable);
+
+krb5_error_code
 krb5int_construct_matching_creds(krb5_context context, krb5_flags options,
                                  krb5_creds *in_creds, krb5_creds *mcreds,
                                  krb5_flags *fields);
@@ -89,6 +99,7 @@ krb5_get_cred_via_tkt_ext (krb5_context context, krb5_creds *tkt,
 
 krb5_error_code
 krb5int_make_tgs_request_ext(krb5_context context,
+                             struct krb5int_fast_request_state *,
                              krb5_flags kdcoptions,
                              const krb5_ticket_times *timestruct,
                              const krb5_enctype *ktypes,
@@ -110,6 +121,7 @@ krb5int_make_tgs_request_ext(krb5_context context,
 
 krb5_error_code
 krb5int_make_tgs_request(krb5_context context,
+                         struct krb5int_fast_request_state *,
                          krb5_creds *tkt,
                          krb5_flags kdcoptions,
                          krb5_address *const *address,
@@ -127,6 +139,7 @@ krb5int_make_tgs_request(krb5_context context,
 
 krb5_error_code
 krb5int_process_tgs_reply(krb5_context context,
+                          struct krb5int_fast_request_state *,
                           krb5_data *response_data,
                           krb5_creds *tkt,
                           krb5_flags kdcoptions,
@@ -145,14 +158,11 @@ krb5int_process_tgs_reply(krb5_context context,
  * in with the subkey needed to decrypt the TGS
  * response. Otherwise it will be set to null.
  */
-krb5_error_code krb5int_decode_tgs_rep(krb5_context, krb5_data *,
+krb5_error_code krb5int_decode_tgs_rep(krb5_context,
+                                       struct krb5int_fast_request_state *,
+                                       krb5_data *,
                                        const krb5_keyblock *, krb5_keyusage,
                                        krb5_kdc_rep ** );
-
-/* Utility functions for zero-terminated enctype lists. */
-size_t krb5int_count_etypes(const krb5_enctype *list);
-krb5_error_code krb5int_copy_etypes(const krb5_enctype *old_list,
-                                    krb5_enctype **new_list);
 
 krb5_error_code
 krb5int_validate_times(krb5_context, krb5_ticket_times *);
@@ -188,5 +198,40 @@ krb5int_mk_setpw_req(krb5_context context, krb5_auth_context auth_context,
 
 void
 k5_ccselect_free_context(krb5_context context);
+
+krb5_error_code
+k5_init_creds_get(krb5_context context, krb5_init_creds_context ctx,
+                  int *use_master);
+
+krb5_error_code
+k5_response_items_new(k5_response_items **ri_out);
+
+void
+k5_response_items_free(k5_response_items *ri);
+
+void
+k5_response_items_reset(k5_response_items *ri);
+
+krb5_boolean
+k5_response_items_empty(const k5_response_items *ri);
+
+const char * const *
+k5_response_items_list_questions(const k5_response_items *ri);
+
+krb5_error_code
+k5_response_items_ask_question(k5_response_items *ri, const char *question,
+                               const char *challenge);
+
+const char *
+k5_response_items_get_challenge(const k5_response_items *ri,
+                                const char *question);
+
+krb5_error_code
+k5_response_items_set_answer(k5_response_items *ri, const char *question,
+                             const char *answer);
+
+const char *
+k5_response_items_get_answer(const k5_response_items *ri,
+                             const char *question);
 
 #endif /* KRB5_INT_FUNC_PROTO__ */

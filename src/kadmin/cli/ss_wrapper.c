@@ -25,6 +25,7 @@
 
 #include <krb5.h>
 #include <k5-platform.h>
+#include <locale.h>
 #include <ss/ss.h>
 #include "kadmin.h"
 
@@ -39,8 +40,7 @@ main(int argc, char *argv[])
     krb5_error_code retval;
     int sci_idx, code = 0;
 
-    setlocale(LC_MESSAGES, "");
-    setlocale(LC_TIME, "");
+    setlocale(LC_ALL, "");
     whoami = ((whoami = strrchr(argv[0], '/')) ? whoami+1 : argv[0]);
 
     request = kadmin_startup(argc, argv);

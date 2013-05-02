@@ -197,7 +197,7 @@ init_any(krb5_context context, char *client_name, enum init_type init_type,
     handle->destroy_cache = 0;
     handle->context = 0;
     *handle->lhandle = *handle;
-    handle->lhandle->api_version = KADM5_API_VERSION_3;
+    handle->lhandle->api_version = KADM5_API_VERSION_4;
     handle->lhandle->struct_version = KADM5_STRUCT_VERSION;
     handle->lhandle->lhandle = handle->lhandle;
 
@@ -236,8 +236,7 @@ init_any(krb5_context context, char *client_name, enum init_type init_type,
 #define ILLEGAL_PARAMS (KADM5_CONFIG_DBNAME | KADM5_CONFIG_ADBNAME |    \
                         KADM5_CONFIG_ADB_LOCKFILE |                     \
                         KADM5_CONFIG_ACL_FILE | KADM5_CONFIG_DICT_FILE  \
-                        | KADM5_CONFIG_ADMIN_KEYTAB |                   \
-                        KADM5_CONFIG_STASH_FILE |                       \
+                        | KADM5_CONFIG_STASH_FILE |                     \
                         KADM5_CONFIG_MKEY_NAME | KADM5_CONFIG_ENCTYPE   \
                         | KADM5_CONFIG_MAX_LIFE |                       \
                         KADM5_CONFIG_MAX_RLIFE |                        \
@@ -337,6 +336,16 @@ init_any(krb5_context context, char *client_name, enum init_type init_type,
         clnt_perror(handle->clnt, "init_2 null resp");
 #endif
         goto error;
+    }
+    /* Drop down to v3 wire protocol if server does not support v4 */
+    if (r->code == KADM5_NEW_SERVER_API_VERSION &&
+        handle->api_version == KADM5_API_VERSION_4) {
+        handle->api_version = KADM5_API_VERSION_3;
+        r = init_2(&handle->api_version, handle->clnt);
+        if (r == NULL) {
+            code = KADM5_RPC_ERROR;
+            goto error;
+        }
     }
     /* Drop down to v2 wire protocol if server does not support v3 */
     if (r->code == KADM5_NEW_SERVER_API_VERSION &&

@@ -28,7 +28,7 @@
 #include <limits.h>
 
 /*
- * $Id: util_token.c 24745 2011-03-25 15:50:06Z ghudson $
+ * $Id$
  */
 
 /* XXXX this code currently makes the assumption that a mech oid will

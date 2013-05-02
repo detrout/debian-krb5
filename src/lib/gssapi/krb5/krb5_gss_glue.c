@@ -49,7 +49,7 @@
  */
 
 /*
- * $Id: krb5_gss_glue.c 25085 2011-08-09 20:00:32Z hartmans $
+ * $Id$
  */
 
 #include "gssapiP_krb5.h"

@@ -123,29 +123,21 @@ gss_OID_set *		mechanisms;
      */
 
     if(mechanisms != NULL) {
-	status = GSS_S_FAILURE;
-	mechs = (gss_OID_set) malloc(sizeof(gss_OID_set_desc));
-	if (mechs == NULL)
-	    goto error;
-	mechs->count = 0;
-	mechs->elements = malloc(sizeof(gss_OID_desc) *
-					 (union_cred ? union_cred->count : 1));
-	if (mechs->elements == NULL)
-	    goto error;
-
 	if (union_cred) {
-	    for (i = 0; i < union_cred->count; i++) {
-		mechs->elements[i].elements =
-		    malloc(union_cred->mechs_array[i].length);
-		if (mechs->elements[i].elements == NULL)
-		    goto error;
-		g_OID_copy(&mechs->elements[i], &union_cred->mechs_array[i]);
-		mechs->count++;
-	    }
+	    status = gssint_make_public_oid_set(minor_status,
+						union_cred->mechs_array,
+						union_cred->count, &mechs);
+	    if (GSS_ERROR(status))
+		goto error;
 	} else {
-	    mechs->elements[0].elements = malloc(mech->mech_type.length);
-	    g_OID_copy(&mechs->elements[0], &mech->mech_type);
-	    mechs->count++;
+	    status = gss_create_empty_oid_set(minor_status, &mechs);
+	    if (GSS_ERROR(status))
+		goto error;
+
+	    status = gss_add_oid_set_member(minor_status,
+					    &mech->mech_type, &mechs);
+	    if (GSS_ERROR(status))
+		goto error;
 	}
 	*mechanisms = mechs;
     }
@@ -153,12 +145,6 @@ gss_OID_set *		mechanisms;
     return(GSS_S_COMPLETE);
 
 error:
-    /*
-     * cleanup any allocated memory - we can just call
-     * gss_release_oid_set, because the set is constructed so that
-     * count always references the currently copied number of
-     * elements.
-     */
     if (mechs != NULL)
 	(void) gss_release_oid_set(&temp_minor_status, &mechs);
 
@@ -184,6 +170,7 @@ gss_inquire_cred_by_mech(minor_status, cred_handle, mech_type, name,
     gss_mechanism	mech;
     OM_uint32		status, temp_minor_status;
     gss_name_t		internal_name;
+    gss_OID		selected_mech;
 
     if (minor_status != NULL)
 	*minor_status = 0;
@@ -194,14 +181,18 @@ gss_inquire_cred_by_mech(minor_status, cred_handle, mech_type, name,
     if (minor_status == NULL)
 	return (GSS_S_CALL_INACCESSIBLE_WRITE);
 
-    mech = gssint_get_mechanism (mech_type);
+    status = gssint_select_mech_type(minor_status, mech_type, &selected_mech);
+    if (status != GSS_S_COMPLETE)
+	return (status);
+
+    mech = gssint_get_mechanism(selected_mech);
     if (!mech)
 	return (GSS_S_BAD_MECH);
     if (!mech->gss_inquire_cred_by_mech)
 	return (GSS_S_BAD_BINDINGS);
 
     union_cred = (gss_union_cred_t) cred_handle;
-    mech_cred = gssint_get_mechanism_cred(union_cred, mech_type);
+    mech_cred = gssint_get_mechanism_cred(union_cred, selected_mech);
 
 #if 0
     if (mech_cred == NULL)
@@ -209,7 +200,7 @@ gss_inquire_cred_by_mech(minor_status, cred_handle, mech_type, name,
 #endif
 
     status = mech->gss_inquire_cred_by_mech(minor_status,
-					    mech_cred, mech_type,
+					    mech_cred, selected_mech,
 					    name ? &internal_name : NULL,
 					    initiator_lifetime,
 					    acceptor_lifetime, cred_usage);

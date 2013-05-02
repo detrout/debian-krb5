@@ -58,6 +58,13 @@
 #include <errno.h>
 #include <ctype.h>
 
+/*
+ * The functions for allocating and releasing individual OIDs use malloc and
+ * free instead of the gssalloc wrappers, because the mechglue currently mixes
+ * generic_gss_copy_oid() with hand-freeing of OIDs.  We do not need to free
+ * free OIDs allocated by mechanisms, so this should not be a problem.
+ */
+
 OM_uint32
 generic_gss_release_oid(OM_uint32 *minor_status, gss_OID *oid)
 {
@@ -90,6 +97,7 @@ generic_gss_release_oid(OM_uint32 *minor_status, gss_OID *oid)
         (*oid != GSS_C_NT_HOSTBASED_SERVICE) &&
         (*oid != GSS_C_NT_ANONYMOUS) &&
         (*oid != GSS_C_NT_EXPORT_NAME) &&
+        (*oid != GSS_C_NT_COMPOSITE_EXPORT) &&
         (*oid != gss_nt_service_name)) {
         free((*oid)->elements);
         free(*oid);
@@ -231,7 +239,6 @@ generic_gss_oid_to_str(OM_uint32 *minor_status,
     OM_uint32           number;
     OM_uint32 i;
     unsigned char       *cp;
-    char                *bp;
     struct k5buf        buf;
 
     if (minor_status != NULL)
@@ -264,9 +271,8 @@ generic_gss_oid_to_str(OM_uint32 *minor_status,
             number = 0;
         }
     }
-    krb5int_buf_add(&buf, "}");
-    bp = krb5int_buf_data(&buf);
-    if (bp == NULL) {
+    krb5int_buf_add_len(&buf, "}\0", 2);
+    if (krb5int_buf_data(&buf) == NULL) {
         *minor_status = ENOMEM;
         return(GSS_S_FAILURE);
     }
@@ -339,10 +345,10 @@ generic_gss_str_to_oid(OM_uint32 *minor_status,
         if (sscanf((char *)bp, "%ld", &numbuf) != 1) {
             return(GSS_S_FAILURE);
         }
-        while (numbuf) {
+        do {
             nbytes++;
             numbuf >>= 7;
-        }
+        } while (numbuf);
         while ((bp < &cp[oid_str->length]) && isdigit(*bp))
             bp++;
         while ((bp < &cp[oid_str->length]) &&
@@ -380,20 +386,20 @@ generic_gss_str_to_oid(OM_uint32 *minor_status,
                 nbytes = 0;
                 /* Have to fill in the bytes msb-first */
                 onumbuf = numbuf;
-                while (numbuf) {
+                do {
                     nbytes++;
                     numbuf >>= 7;
-                }
+                } while (numbuf);
                 numbuf = onumbuf;
                 op += nbytes;
                 i = -1;
-                while (numbuf) {
+                do {
                     op[i] = (unsigned char) numbuf & 0x7f;
                     if (i != -1)
                         op[i] |= 0x80;
                     i--;
                     numbuf >>= 7;
-                }
+                } while (numbuf);
                 while (isdigit(*bp))
                     bp++;
                 while (isspace(*bp) || *bp == '.')
@@ -542,7 +548,7 @@ generic_gss_copy_oid_set(OM_uint32 *minor_status,
     *new_oidset = copy;
 done:
     if (major != GSS_S_COMPLETE) {
-        (void) gss_release_oid_set(&minor, &copy);
+        (void) generic_gss_release_oid_set(&minor, &copy);
     }
 
     return (major);

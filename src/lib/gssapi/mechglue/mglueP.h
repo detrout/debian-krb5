@@ -23,8 +23,9 @@ do {								\
 /*
  * Array of context IDs typed by mechanism OID
  */
-typedef struct gss_ctx_id_struct {
-	struct gss_ctx_id_struct *loopback;
+typedef struct gss_union_ctx_id_struct {
+	struct gss_union_ctx_id_struct *loopback;
+	struct gss_union_ctx_id_struct *interposer;
 	gss_OID			mech_type;
 	gss_ctx_id_t		internal_ctx_id;
 } gss_union_ctx_id_desc, *gss_union_ctx_id_t;
@@ -63,18 +64,6 @@ typedef struct gss_cred_id_struct {
 	gss_OID			mechs_array;
 	gss_cred_id_t		*cred_array;
 } gss_union_cred_desc, *gss_union_cred_t;
-
-typedef	OM_uint32 (KRB5_CALLCONV *gss_acquire_cred_with_password_sfct)(
-		    OM_uint32 *,	/* minor_status */
-		    const gss_name_t,	/* desired_name */
-		    const gss_buffer_t, /* password */
-		    OM_uint32,		/* time_req */
-		    const gss_OID_set,	/* desired_mechs */
-		    int,		/* cred_usage */
-		    gss_cred_id_t *,	/* output_cred_handle */
-		    gss_OID_set *,	/* actual_mechs */
-		    OM_uint32 *		/* time_rec */
-	/* */);
 
 /*
  * Rudimentary pointer validation macro to check whether the
@@ -605,12 +594,87 @@ typedef struct gss_config {
 	    gss_OID_set *		/* known_mech_attrs */
 	/* */);
 
-} *gss_mechanism;
+	/* Credential store extensions */
 
-/* This structure MUST NOT be used by any code outside libgss */
-typedef struct gss_config_ext {
-    gss_acquire_cred_with_password_sfct	gssspi_acquire_cred_with_password;
-} *gss_mechanism_ext;
+	OM_uint32       (KRB5_CALLCONV *gss_acquire_cred_from)
+	(
+	    OM_uint32 *,		/* minor_status */
+	    gss_name_t,			/* desired_name */
+	    OM_uint32,			/* time_req */
+	    gss_OID_set,		/* desired_mechs */
+	    gss_cred_usage_t,		/* cred_usage */
+	    gss_const_key_value_set_t,	/* cred_store */
+	    gss_cred_id_t *,		/* output_cred_handle */
+	    gss_OID_set *,		/* actual_mechs */
+	    OM_uint32 *			/* time_rec */
+	/* */);
+
+	OM_uint32       (KRB5_CALLCONV *gss_store_cred_into)
+	(
+	    OM_uint32 *,		/* minor_status */
+	    gss_cred_id_t,		/* input_cred_handle */
+	    gss_cred_usage_t,		/* input_usage */
+	    gss_OID,			/* desired_mech */
+	    OM_uint32,			/* overwrite_cred */
+	    OM_uint32,			/* default_cred */
+	    gss_const_key_value_set_t,	/* cred_store */
+	    gss_OID_set *,		/* elements_stored */
+	    gss_cred_usage_t *		/* cred_usage_stored */
+	/* */);
+
+	OM_uint32       (KRB5_CALLCONV *gssspi_acquire_cred_with_password)
+	(
+	    OM_uint32 *,		/* minor_status */
+	    const gss_name_t,		/* desired_name */
+	    const gss_buffer_t,	 /* password */
+	    OM_uint32,			/* time_req */
+	    const gss_OID_set,		/* desired_mechs */
+	    int,			/* cred_usage */
+	    gss_cred_id_t *,		/* output_cred_handle */
+	    gss_OID_set *,		/* actual_mechs */
+	    OM_uint32 *			/* time_rec */
+	/* */);
+
+	OM_uint32       (KRB5_CALLCONV *gss_export_cred)
+	(
+	    OM_uint32 *,		/* minor_status */
+	    gss_cred_id_t,		/* cred_handle */
+	    gss_buffer_t		/* token */
+	/* */);
+
+	OM_uint32       (KRB5_CALLCONV *gss_import_cred)
+	(
+		OM_uint32 *,		/* minor_status */
+		gss_buffer_t,		/* token */
+		gss_cred_id_t *		/* cred_handle */
+	/* */);
+
+	OM_uint32       (KRB5_CALLCONV *gssspi_import_sec_context_by_mech)
+	(
+	    OM_uint32 *,		/* minor_status */
+	    gss_OID,			/* desired_mech */
+	    gss_buffer_t,		/* interprocess_token */
+	    gss_ctx_id_t *		/* context_handle */
+	/* */);
+
+	OM_uint32       (KRB5_CALLCONV *gssspi_import_name_by_mech)
+	(
+	    OM_uint32 *,		/* minor_status */
+	    gss_OID,			/* mech_type */
+	    gss_buffer_t,		/* input_name_buffer */
+	    gss_OID,			/* input_name_type */
+	    gss_name_t*			/* output_name */
+	/* */);
+
+	OM_uint32       (KRB5_CALLCONV *gssspi_import_cred_by_mech)
+	(
+	    OM_uint32 *,		/* minor_status */
+	    gss_OID,			/* mech_type */
+	    gss_buffer_t,		/* token */
+	    gss_cred_id_t *		/* cred_handle */
+	/* */);
+
+} *gss_mechanism;
 
 /*
  * In the user space we use a wrapper structure to encompass the
@@ -627,9 +691,11 @@ typedef struct gss_mech_config {
 	void *dl_handle;		/* RTLD object handle for the mech */
 	gss_OID mech_type;		/* mechanism oid */
 	gss_mechanism mech;		/* mechanism initialization struct */
- 	gss_mechanism_ext mech_ext;	/* extensions */
  	int priority;			/* mechanism preference order */
 	int freeMech;			/* free mech table */
+	int is_interposer;		/* interposer mechanism flag */
+	gss_OID int_mech_type;		/* points to the interposer OID */
+	gss_mechanism int_mech;		/* points to the interposer mech */
 	struct gss_mech_config *next;	/* next element in the list */
 } *gss_mech_info;
 
@@ -641,8 +707,12 @@ int gssint_mechglue_init(void);
 void gssint_mechglue_fini(void);
 #endif
 
+OM_uint32 gssint_select_mech_type(OM_uint32 *minor, gss_const_OID in_oid,
+				  gss_OID *selected_oid);
+gss_OID gssint_get_public_oid(gss_const_OID internal_oid);
+OM_uint32 gssint_make_public_oid_set(OM_uint32 *minor_status, gss_OID oids,
+				     int count, gss_OID_set *public_set);
 gss_mechanism gssint_get_mechanism (gss_const_OID);
-gss_mechanism_ext gssint_get_mechanism_ext(const gss_OID);
 OM_uint32 gssint_get_mech_type (gss_OID, gss_buffer_t);
 char *gssint_get_kmodName(const gss_OID);
 char *gssint_get_modOptions(const gss_OID);
@@ -693,23 +763,6 @@ OM_uint32 gss_add_mech_name_type
 /*
  * Sun extensions to GSS-API v2
  */
-
-OM_uint32
-gssint_mech_to_oid(
-	const char *mech,		/* mechanism string name */
-	gss_OID *oid			/* mechanism oid */
-);
-
-const char *
-gssint_oid_to_mech(
-	const gss_OID oid		/* mechanism oid */
-);
-
-OM_uint32
-gssint_get_mechanisms(
-	char *mechArray[],		/* array to populate with mechs */
-	int arrayLen			/* length of passed in array */
-);
 
 int
 gssint_get_der_length(

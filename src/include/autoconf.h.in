@@ -23,6 +23,15 @@
 /* Define if crypto implementation is NSS */
 #undef CRYPTO_IMPL_NSS
 
+/* Define to default ccache name */
+#undef DEFCCNAME
+
+/* Define to default client keytab name */
+#undef DEFCKTNAME
+
+/* Define to default keytab name */
+#undef DEFKTNAME
+
 /* Define if library initialization should be delayed until first use */
 #undef DELAY_INITIALIZER
 
@@ -139,9 +148,6 @@
 
 /* Define to 1 if you have the `dn_skipname' function. */
 #undef HAVE_DN_SKIPNAME
-
-/* Define if LDAP KDB interface should assume eDirectory. */
-#undef HAVE_EDIRECTORY
 
 /* Define to 1 if you have the <endian.h> header file. */
 #undef HAVE_ENDIAN_H
@@ -622,9 +628,6 @@
 /* May need to be defined to enable IPv6 support, for example on IRIX */
 #undef INET6
 
-/* Define if using bundled libverto */
-#undef INTERNAL_VERTO
-
 /* Define if MIT Project Athena default configuration should be used */
 #undef KRB5_ATHENA_COMPAT
 
@@ -636,10 +639,6 @@
 
 /* Define to enable DNS lookups of Kerberos realm names */
 #undef KRB5_DNS_LOOKUP_REALM
-
-/* Define if we should compile in IPv6 support (even if we can't use it at run
-   time) */
-#undef KRB5_USE_INET6
 
 /* Define if KDC should update database with each request */
 #undef KRBCONF_KDC_MODIFIES_KDB

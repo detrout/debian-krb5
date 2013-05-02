@@ -31,6 +31,7 @@
 
 #include "k5-int.h"
 #include "int-proto.h"
+#include "fast.h"
 
 static krb5_error_code
 kdcrep2creds(krb5_context context, krb5_kdc_rep *pkdcrep, krb5_address *const *address,
@@ -117,13 +118,9 @@ check_reply_server(krb5_context context, krb5_flags kdcoptions,
     if (kdcoptions & KDC_OPT_CANONICALIZE) {
         /* in_cred server differs from ticket returned, but ticket
            returned is consistent and we requested canonicalization. */
-#if 0
-#ifdef DEBUG_REFERRALS
-        printf("gc_via_tkt: in_cred and encoding don't match but referrals requested\n");
-        krb5int_dbgref_dump_principal("gc_via_tkt: in_cred",in_cred->server);
-        krb5int_dbgref_dump_principal("gc_via_tkt: encoded server",dec_rep->enc_part2->server);
-#endif
-#endif
+
+        TRACE_CHECK_REPLY_SERVER_DIFFERS(context, in_cred->server,
+                                         dec_rep->enc_part2->server);
         return 0;
     }
 
@@ -171,6 +168,7 @@ krb5_get_cred_via_tkt(krb5_context context, krb5_creds *tkt,
 
 krb5_error_code
 krb5int_make_tgs_request(krb5_context context,
+                         struct krb5int_fast_request_state *fast_state,
                          krb5_creds *tkt,
                          krb5_flags kdcoptions,
                          krb5_address *const *address,
@@ -214,7 +212,8 @@ krb5int_make_tgs_request(krb5_context context,
         enctypes[1] = 0;
     }
 
-    retval = krb5int_make_tgs_request_ext(context, kdcoptions, &in_cred->times,
+    retval = krb5int_make_tgs_request_ext(context, fast_state, kdcoptions,
+                                          &in_cred->times,
                                           enctypes, in_cred->server, address,
                                           in_cred->authdata, in_padata,
                                           second_tkt ?
@@ -230,6 +229,7 @@ krb5int_make_tgs_request(krb5_context context,
 
 krb5_error_code
 krb5int_process_tgs_reply(krb5_context context,
+                          struct krb5int_fast_request_state *fast_state,
                           krb5_data *response_data,
                           krb5_creds *tkt,
                           krb5_flags kdcoptions,
@@ -256,6 +256,10 @@ krb5int_process_tgs_reply(krb5_context context,
     if (krb5_is_krb_error(response_data)) {
         retval = decode_krb5_error(response_data, &err_reply);
         if (retval != 0)
+            goto cleanup;
+        retval = krb5int_fast_process_error(context, fast_state,
+                                            &err_reply, NULL, NULL);
+        if (retval)
             goto cleanup;
         retval = (krb5_error_code) err_reply->error + ERROR_TABLE_BASE_krb5;
         if (err_reply->text.length > 0) {
@@ -292,13 +296,12 @@ krb5int_process_tgs_reply(krb5_context context,
 
     /* Unfortunately, Heimdal at least up through 1.2  encrypts using
        the session key not the subsession key.  So we try both. */
-    retval = krb5int_decode_tgs_rep(context, response_data,
-                                    subkey,
+    retval = krb5int_decode_tgs_rep(context, fast_state, response_data, subkey,
                                     KRB5_KEYUSAGE_TGS_REP_ENCPART_SUBKEY,
                                     &dec_rep);
     if (retval) {
         TRACE_TGS_REPLY_DECODE_SESSION(context, &tkt->keyblock);
-        if ((krb5int_decode_tgs_rep(context, response_data,
+        if ((krb5int_decode_tgs_rep(context, fast_state, response_data,
                                     &tkt->keyblock,
                                     KRB5_KEYUSAGE_TGS_REP_ENCPART_SESSKEY, &dec_rep)) == 0)
             retval = 0;
@@ -416,19 +419,21 @@ krb5_get_cred_via_tkt_ext(krb5_context context, krb5_creds *tkt,
     krb5_int32 nonce;
     krb5_keyblock *subkey = NULL;
     int tcp_only = 0, use_master = 0;
+    struct krb5int_fast_request_state *fast_state = NULL;
 
     request_data.data = NULL;
     request_data.length = 0;
     response_data.data = NULL;
     response_data.length = 0;
 
-#ifdef DEBUG_REFERRALS
-    printf("krb5_get_cred_via_tkt starting; referral flag is %s\n", kdcoptions&KDC_OPT_CANONICALIZE?"on":"off");
-    krb5int_dbgref_dump_principal("krb5_get_cred_via_tkt requested ticket", in_cred->server);
-    krb5int_dbgref_dump_principal("krb5_get_cred_via_tkt TGT in use", tkt->server);
-#endif
+    retval = krb5int_fast_make_state(context, &fast_state);
+    if (retval)
+        goto cleanup;
 
-    retval = krb5int_make_tgs_request(context, tkt, kdcoptions,
+    TRACE_GET_CRED_VIA_TKT_EXT(context, in_cred->server, tkt->server,
+                               kdcoptions);
+
+    retval = krb5int_make_tgs_request(context, fast_state, tkt, kdcoptions,
                                       address, in_padata, in_cred,
                                       pacb_fct, pacb_data,
                                       &request_data, &timestamp, &nonce,
@@ -448,6 +453,10 @@ send_again:
                 retval = decode_krb5_error(&response_data, &err_reply);
                 if (retval != 0)
                     goto cleanup;
+                retval = krb5int_fast_process_error(context, fast_state,
+                                                    &err_reply, NULL, NULL);
+                if (retval)
+                    goto cleanup;
                 if (err_reply->error == KRB_ERR_RESPONSE_TOO_BIG) {
                     tcp_only = 1;
                     krb5_free_error(context, err_reply);
@@ -460,7 +469,7 @@ send_again:
     } else
         goto cleanup;
 
-    retval = krb5int_process_tgs_reply(context, &response_data,
+    retval = krb5int_process_tgs_reply(context, fast_state, &response_data,
                                        tkt, kdcoptions, address,
                                        in_padata, in_cred,
                                        timestamp, nonce, subkey,
@@ -470,9 +479,8 @@ send_again:
         goto cleanup;
 
 cleanup:
-#ifdef DEBUG_REFERRALS
-    printf("krb5_get_cred_via_tkt ending; %s\n", retval?error_message(retval):"no error");
-#endif
+    krb5int_fast_free_state(context, fast_state);
+    TRACE_GET_CRED_VIA_TKT_EXT_RETURN(context, retval);
 
     krb5_free_data_contents(context, &request_data);
     krb5_free_data_contents(context, &response_data);

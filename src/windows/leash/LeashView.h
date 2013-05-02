@@ -67,20 +67,74 @@ enum ticketTimeLeft{NO_TICKETS, ZERO_MINUTES_LEFT, FIVE_MINUTES_LEFT, TEN_MINUTE
 // Don't change 'NO_TICKET's' value
 
 class CLeashDebugWindow;
+class ViewColumnInfo
+{
+public:
+    const char * m_name;
+    int m_enabled;
+    int m_id;
+    int m_columnWidth;
+};
 
-class CLeashView : public CFormView
+enum eViewColumn {
+    PRINCIPAL,
+    TIME_ISSUED,
+    RENEWABLE_UNTIL,
+    VALID_UNTIL,
+    ENCRYPTION_TYPE,
+    TICKET_FLAGS,
+    NUM_VIEW_COLUMNS
+};
+
+class CCacheDisplayData
+{
+public:
+    CCacheDisplayData(const char *ccache_name) :
+      m_next(NULL),
+      m_ccacheName(strdup(ccache_name)),
+      m_index(-1),
+      m_focus(-1),
+      m_expanded(0),
+      m_selected(0),
+      m_isRenewable(0),
+      m_isDefault(0)
+    {
+    }
+
+    ~CCacheDisplayData()
+    {
+        if (m_ccacheName)
+            free(m_ccacheName);
+    }
+
+    CCacheDisplayData *m_next;
+    char *m_ccacheName;
+    int m_index;               // item index in list view
+    int m_focus;               // sub-item with focus
+    unsigned int m_expanded;   // true when each individual ticket is displayed
+    unsigned int m_selected;   // true when this ccache is selected
+    unsigned int m_isRenewable; // true when tgt is renewable
+    unsigned int m_isDefault;  // true when this is the default ccache
+};
+
+struct ListItemInfo
+{
+    ListItemInfo() : m_font(NULL), m_durationFont(NULL) {}
+    HFONT m_durationFont; // For renewable/valid until; italic when expired
+    HFONT m_font;         // For all other items
+};
+
+class CLeashView : public CListView
 {
 private:
 ////@#+Remove
 #ifndef NO_KRB4
     TicketList*         m_listKrb4;
 #endif
-    TicketList*         m_listKrb5;
     TicketList*         m_listAfs;
     CLeashDebugWindow*	m_pDebugWindow;
+    CCacheDisplayData*  m_ccacheDisplay;
 	CImageList			m_imageList;
-	CImageList			*m_pImageList;
-    CTreeCtrl*			m_pTree;
 	CWinApp*			m_pApp;
 	HTREEITEM			m_hPrincipal;
 ////@#+Remove
@@ -110,6 +164,13 @@ private:
     CString*            m_pWarningMessage;
     BOOL                m_bIconAdded;
     BOOL                m_bIconDeleted;
+    HFONT               m_BaseFont;
+    HFONT               m_BoldFont;
+    HFONT               m_ItalicFont;
+    HFONT               m_BoldItalicFont;
+    ListItemInfo*       m_aListItemInfo;
+
+    static ViewColumnInfo sm_viewColumns[NUM_VIEW_COLUMNS];
 
     static INT		   	m_autoRenewTickets;
     static INT          m_ticketStatusAfs;
@@ -131,6 +192,7 @@ private:
     static BOOL			m_lowTicketAlarmSound;
     static LONG         m_timerMsgNotInProgress;
 
+    void ToggleViewColumn(eViewColumn viewOption);
 	VOID ResetTreeNodes();
     VOID ApplicationInfoMissingMsg();
     VOID GetScrollBarState(CSize sizeClient, CSize& needSb,
@@ -139,6 +201,7 @@ private:
     VOID UpdateBars();
     VOID GetScrollBarSizes(CSize& sizeSb);
     BOOL GetTrueClientSize(CSize& size, CSize& sizeSb);
+    HFONT GetSubItemFont(int iItem, int iSubItem);
 
     //void   GetRowWidthHeight(CDC* pDC, LPCSTR theString, int& nRowWidth,
     //                         int& nRowHeight, int& nCharWidth);
@@ -148,6 +211,17 @@ private:
     static VOID	UpdateTicketTime(TICKETINFO& ticketinfo);
     static INT	GetLowTicketStatus(int);
     static time_t	LeashTime();
+    static BOOL IsExpired(TicketList *ticket);
+    static BOOL IsExpired(TICKETINFO *info);
+    static VOID AddDisplayItem(CListCtrl &list,
+                               CCacheDisplayData *elem,
+                               int iItem,
+                               char *principal,
+                               long issued,
+                               long valid_until,
+                               long renew_until,
+                               char *encTypes,
+                               unsigned long flags);
 
     void   SetTrayIcon(int nim, int state=0);
     void   SetTrayText(int nim, CString tip);
@@ -162,6 +236,8 @@ private:
     // returns TRUE if message is queued successfully.
     BOOL PostWarningMessage(const CString& message);
     afx_msg LRESULT OnWarningPopup(WPARAM wParam, LPARAM lParam);
+
+    BOOL    IsExpanded(TICKETINFO *);
 
 protected: // create from serialization only
 	DECLARE_DYNCREATE(CLeashView)
@@ -218,11 +294,17 @@ protected:
 	afx_msg VOID OnRenewTicket();
 	afx_msg VOID OnImportTicket();
 	afx_msg VOID OnDestroyTicket();
+	afx_msg VOID OnMakeDefault();
 	afx_msg VOID OnChangePassword();
 	afx_msg VOID OnUpdateDisplay();
 	afx_msg VOID OnSynTime();
 	afx_msg VOID OnDebugMode();
 	afx_msg VOID OnLargeIcons();
+	afx_msg VOID OnTimeIssued();
+	afx_msg VOID OnValidUntil();
+	afx_msg VOID OnRenewableUntil();
+	afx_msg VOID OnShowTicketFlags();
+	afx_msg VOID OnEncryptionType();
 	afx_msg VOID OnUppercaseRealm();
 	afx_msg VOID OnKillTixOnExit();
 	afx_msg VOID OnDestroy();
@@ -230,6 +312,16 @@ protected:
 	afx_msg VOID OnUpdateImportTicket(CCmdUI* pCmdUI);
 	afx_msg VOID OnUpdateInitTicket(CCmdUI* pCmdUI);
 	afx_msg VOID OnUpdateRenewTicket(CCmdUI* pCmdUI);
+	afx_msg VOID OnUpdateTimeIssued(CCmdUI* pCmdUI);
+	afx_msg VOID OnUpdateValidUntil(CCmdUI* pCmdUI);
+	afx_msg VOID OnUpdateRenewableUntil(CCmdUI* pCmdUI);
+	afx_msg VOID OnUpdateShowTicketFlags(CCmdUI* pCmdUI);
+	afx_msg VOID OnUpdateEncryptionType(CCmdUI* pCmdUI);
+	afx_msg VOID OnUpdateUppercaseRealm(CCmdUI* pCmdUI);
+	afx_msg VOID OnUpdateKillTixOnExit(CCmdUI* pCmdUI);
+	afx_msg VOID OnUpdateLowTicketAlarm(CCmdUI* pCmdUI);
+	afx_msg VOID OnUpdateAutoRenew(CCmdUI* pCmdUI);
+	afx_msg VOID OnUpdateMakeDefault(CCmdUI* pCmdUI);
 	afx_msg VOID OnAppAbout();
 	afx_msg VOID OnAfsControlPanel();
 	afx_msg VOID OnUpdateDebugMode(CCmdUI* pCmdUI);
@@ -253,8 +345,14 @@ protected:
 	afx_msg LRESULT OnGoodbye(WPARAM wParam, LPARAM lParam);
 	afx_msg LRESULT OnTrayIcon(WPARAM wParam, LPARAM lParam);
     afx_msg LRESULT OnObtainTGTWithParam(WPARAM wParam, LPARAM lParam);
-	//}}AFX_MSG
+    afx_msg void OnItemChanged(NMHDR* pNmHdr, LRESULT* pResult);
+    //}}AFX_MSG
 	DECLARE_MESSAGE_MAP()
+public:
+    afx_msg void OnLvnItemchanging(NMHDR *pNMHDR, LRESULT *pResult);
+    afx_msg void OnLvnItemActivate(NMHDR *pNMHDR, LRESULT *pResult);
+    afx_msg void OnLvnKeydown(NMHDR *pNMHDR, LRESULT *pResult);
+    afx_msg void OnNMCustomdraw(NMHDR *pNMHDR, LRESULT *pResult);
 };
 
 /*

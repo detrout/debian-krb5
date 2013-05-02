@@ -24,20 +24,23 @@
 from k5test import *
 
 # Create two independent realms (no cross-realm TGTs).
-r1 = K5Realm(start_kadmind=False, create_user=False)
-r2 = K5Realm(start_kadmind=False, create_user=False, realm='KRBTEST2.COM',
-             testdir=os.path.join(r1.testdir, 'r2'), portbase=62000)
+r1 = K5Realm(create_user=False)
+r2 = K5Realm(create_user=False, realm='KRBTEST2.COM', portbase=62000,
+             testdir=os.path.join(r1.testdir, 'r2'))
+
+host1 = 'p:' + r1.host_princ
+host2 = 'p:' + r2.host_princ
 
 # gsserver specifies the target as a GSS name.  The resulting
 # principal will have the host-based type, but the realm won't be
 # known before the client cache is selected (since k5test realms have
 # no domain-realm mapping by default).
-gssserver = 'gss:host@' + hostname
+gssserver = 'h:host@' + hostname
 
 # refserver specifies the target as a principal in the referral realm.
 # The principal won't be treated as a host principal by the
 # .k5identity rules since it has unknown type.
-refserver = 'host/' + hostname + '@'
+refserver = 'p:host/' + hostname + '@'
 
 # Make each realm's keytab contain entries for both realm's servers.
 #r1.run_as_client(['/bin/sh', '-c', '(echo rkt %s; echo wkt %s) | %s' %
@@ -45,10 +48,15 @@ refserver = 'host/' + hostname + '@'
 #r1.run_as_client(['/bin/sh', '-c', '(echo rkt %s; echo wkt %s) | %s' %
 #                  (r1.keytab, r2.keytab, ktutil)])
 
+# Verify that we can't get initiator creds with no credentials in the
+# collection.
+output = r1.run_as_client(['./t_ccselect', host1, '-'], expected_code=1)
+if 'No Kerberos credentials available' not in output:
+    fail('Expected error not seen in output when no credentials available')
+
 # Make a directory collection and use it for client commands in both realms.
 ccdir = os.path.join(r1.testdir, 'cc')
 ccname = 'DIR:' + ccdir
-os.mkdir(ccdir)
 r1.env_client['KRB5CCNAME'] = ccname
 r2.env_client['KRB5CCNAME'] = ccname
 
@@ -69,24 +77,24 @@ r1.kinit(alice, password('alice'))
 r2.kinit(zaphod, password('zaphod'))
 
 # Check that we can find a cache for a specified client principal.
-output = r1.run_as_client(['./t_ccselect', r1.host_princ, alice])
+output = r1.run_as_client(['./t_ccselect', host1, 'p:' + alice])
 if output != (alice + '\n'):
     fail('alice not chosen when specified')
-output = r2.run_as_client(['./t_ccselect', r2.host_princ, zaphod])
+output = r2.run_as_client(['./t_ccselect', host2, 'p:' + zaphod])
 if output != (zaphod + '\n'):
     fail('zaphod not chosen when specified')
 
 # Check that we can guess a cache based on the service realm.
-output = r1.run_as_client(['./t_ccselect', r1.host_princ])
+output = r1.run_as_client(['./t_ccselect', host1])
 if output != (alice + '\n'):
     fail('alice not chosen as default initiator cred for server in r1')
-output = r1.run_as_client(['./t_ccselect', r1.host_princ, '-'])
+output = r1.run_as_client(['./t_ccselect', host1, '-'])
 if output != (alice + '\n'):
     fail('alice not chosen as default initiator name for server in r1')
-output = r2.run_as_client(['./t_ccselect', r2.host_princ])
+output = r2.run_as_client(['./t_ccselect', host2])
 if output != (zaphod + '\n'):
     fail('zaphod not chosen as default initiator cred for server in r1')
-output = r2.run_as_client(['./t_ccselect', r2.host_princ, '-'])
+output = r2.run_as_client(['./t_ccselect', host2, '-'])
 if output != (zaphod + '\n'):
     fail('zaphod not chosen as default initiator name for server in r1')
 
@@ -105,7 +113,7 @@ k5id.write('%s realm=%s\n' % (alice, r1.realm))
 k5id.write('%s service=ho*t host=%s\n' % (zaphod, hostname))
 k5id.write('noprinc service=bogus')
 k5id.close()
-output = r1.run_as_client(['./t_ccselect', r1.host_princ])
+output = r1.run_as_client(['./t_ccselect', host1])
 if output != (alice + '\n'):
     fail('alice not chosen via .k5identity realm line.')
 output = r2.run_as_client(['./t_ccselect', gssserver])
@@ -114,9 +122,9 @@ if output != (zaphod + '\n'):
 output = r1.run_as_client(['./t_ccselect', refserver])
 if output != (bob + '\n'):
     fail('bob not chosen via primary cache when no .k5identity line matches.')
-output = r1.run_as_client(['./t_ccselect', 'gss:bogus@' + hostname],
+output = r1.run_as_client(['./t_ccselect', 'h:bogus@' + hostname],
                           expected_code=1)
-if 'does not match desired' not in output:
+if 'Can\'t find client principal noprinc' not in output:
     fail('Expected error not seen when k5identity selects bad principal.')
 
-success('GSSAPI credential selection tests.')
+success('GSSAPI credential selection tests')

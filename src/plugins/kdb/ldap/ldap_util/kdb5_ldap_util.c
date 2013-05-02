@@ -75,6 +75,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <locale.h>
 #include <stdio.h>
 #include <time.h>
 
@@ -169,16 +170,7 @@ static struct _cmd_table {
     {"view", kdb5_ldap_view, 1},
     {"destroy", kdb5_ldap_destroy, 1},
     {"list", kdb5_ldap_list, 1},
-#ifdef HAVE_EDIRECTORY
-    {"create_service", kdb5_ldap_create_service, 1},
-    {"modify_service", kdb5_ldap_modify_service, 1},
-    {"view_service", kdb5_ldap_view_service, 1},
-    {"destroy_service", kdb5_ldap_destroy_service, 1},
-    {"list_service",kdb5_ldap_list_services,1},
-    {"setsrvpw", kdb5_ldap_set_service_password, 0},
-#else
     {"stashsrvpw", kdb5_ldap_stash_service_password, 0},
-#endif
     {"create_policy", kdb5_ldap_create_policy, 1},
     {"modify_policy", kdb5_ldap_modify_policy, 1},
     {"view_policy", kdb5_ldap_view_policy, 1},
@@ -261,7 +253,7 @@ main(int argc, char *argv[])
     /*
      * Ensure that "progname" is set before calling com_err.
      */
-    setlocale(LC_MESSAGES, "");
+    setlocale(LC_ALL, "");
     progname = (strrchr(argv[0], '/') ? strrchr(argv[0], '/')+1 : argv[0]);
 
     retval = kadm5_init_krb5_context(&util_context);

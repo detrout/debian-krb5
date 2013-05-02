@@ -26,7 +26,7 @@ SHLIB_EXPDEPS = \
 	$(TOPLIBD)/libkrb5$(SHLIBEXT) \
 	$(TOPLIBD)/lib$(SUPPORT_LIBNAME)$(SHLIBEXT)
 SHLIB_EXPLIBS= -lkdb_ldap $(GSSRPC_LIBS) -lkrb5 -lcom_err -lk5crypto -lkrb5support $(LIBS)
-SHLIB_DIRS=-L$(TOPLIBD) -Wl,-rpath,$(KRB5_LIBDIR)/krb5
+SHLIB_DIRS=-L$(TOPLIBD)
 SHLIB_RDIRS=$(KRB5_LIBDIR)
 
 SRCS= 	$(srcdir)/ldap_exp.c
@@ -39,7 +39,7 @@ STLIBOBJS= ldap_exp.o
 
 all-unix:: all-liblinks
 install-unix:: install-libs
-clean-unix:: clean-libs clean-libobjs
+clean-unix:: clean-liblinks clean-libs clean-libobjs
 
 @libnover_frag@
 @libobj_frag@

@@ -38,9 +38,6 @@
         <?define ProductCode="????????-????-????-????-????????????"?>
     <?endif?>
 
-    <!-- DefaultRealm, is your default realm.  Must be uppercase -->
-    <?define DefaultRealm="ATHENA.MIT.EDU"?>
-
     <!-- One of the following must be defined and must correspond to the
          version of compiler used for building Kerberos for Windows -->
 
@@ -52,12 +49,7 @@
 
     <!-- At most one of the following could be defined and must correspond
          to the type of build performed. -->
-    <?define Debug?>
     <!--<?define Release?>-->
-
-    <!-- We are including debug symbols anyway.  Undefine this for a leaner
-         installer without debug syms. -->
-    <?define DebugSyms?>
 
     <!-- Optional defines -->
     <!-- <?define Beta="1"?>  --> <!-- Numeric Beta identifier -->
@@ -72,10 +64,6 @@
 
     <?ifndef TargetDir?>
         <?define TargetDir="$(sys.SOURCEFILEDIR)..\..\..\"?>
-    <?endif?>
-
-    <?ifndef ConfigDir?>
-        <?define ConfigDir="$(env.SystemRoot)\"?>
     <?endif?>
 
     <?ifndef VersionMajor?>
@@ -94,11 +82,6 @@
 
     <?ifndef BuildLang?>
         <?error Must define BuildLang?>
-    <?endif?>
-
-    <!-- DefaultRealm.  Must be uppercase. -->
-    <?ifndef DefaultRealm?>
-        <?error Must define DefaultRealm?>
     <?endif?>
 
     <!-- The build makefile defines 'Date' and 'Time' which are strings that

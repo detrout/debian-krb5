@@ -49,12 +49,10 @@ static char THIS_FILE[] = __FILE__;
 extern "C" int VScheckVersion(HWND hWnd, HANDLE hThisInstance);
 
 TicketInfoWrapper ticketinfo;
-#ifndef KRB5_TC_NOTICKET  /* test for krb5 1.4 and thread safety */
-HANDLE m_tgsReqMutex = 0;
-#endif
 
 HWND CLeashApp::m_hProgram = 0;
 HINSTANCE CLeashApp::m_hLeashDLL = 0;
+HINSTANCE CLeashApp::m_hComErr = 0;
 ////@#+Remove
 #ifndef NO_KRB4
 HINSTANCE CLeashApp::m_hKrb4DLL = 0;
@@ -67,6 +65,8 @@ HINSTANCE CLeashApp::m_hToolHelp32 = 0;
 krb5_context CLeashApp::m_krbv5_context = 0;
 profile_t CLeashApp::m_krbv5_profile = 0;
 HINSTANCE CLeashApp::m_hKrbLSA = 0;
+int CLeashApp::m_useRibbon = TRUE;
+BOOL CLeashApp::m_bUpdateDisplay = FALSE;
 
 /////////////////////////////////////////////////////////////////////////////
 // CLeashApp
@@ -93,9 +93,6 @@ CLeashApp::CLeashApp()
     memset(&ticketinfo, 0, sizeof(ticketinfo));
 
     ticketinfo.lockObj = CreateMutex(NULL, FALSE, NULL);
-#ifndef KRB5_TC_NOTICKET
-    m_tgsReqMutex = CreateMutex(NULL, FALSE, NULL);
-#endif
 
 #ifdef USE_HTMLHELP
 #if _MSC_VER >= 1300
@@ -119,9 +116,6 @@ CLeashApp::~CLeashApp()
 #ifdef COMMENT
 	/* Do not free the locking objects.  Doing so causes an invalid handle access */
     CloseHandle(ticketinfo.lockObj);
-#ifndef KRB5_TC_NOTICKET
-    CloseHandle(m_tgsReqMutex);
-#endif
 #endif
 	AfxFreeLibrary(m_hLeashDLL);
 #ifndef NO_KRB4
@@ -133,6 +127,9 @@ CLeashApp::~CLeashApp()
 	AfxFreeLibrary(m_hPsapi);
     AfxFreeLibrary(m_hToolHelp32);
     AfxFreeLibrary(m_hKrbLSA);
+#ifdef DEBUG
+    _CrtDumpMemoryLeaks();
+#endif
 }
 
 /////////////////////////////////////////////////////////////////////////////
@@ -164,9 +161,20 @@ extern "C" {
 
 BOOL CLeashApp::InitInstance()
 {
+#ifdef DEBUG
+    _CrtSetReportMode( _CRT_WARN, _CRTDBG_MODE_FILE );
+    _CrtSetReportFile( _CRT_WARN, _CRTDBG_FILE_STDOUT );
+    _CrtSetReportMode( _CRT_ERROR, _CRTDBG_MODE_FILE );
+    _CrtSetReportFile( _CRT_ERROR, _CRTDBG_FILE_STDOUT );
+
+    int tmp = _CrtSetDbgFlag( _CRTDBG_REPORT_FLAG);
+    _CrtSetDbgFlag( tmp | _CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
+#endif
+    AfxOleInit();
     // NOTE: Not used at this time
     /// Set LEASH_DLL to the path where the Leash.exe is
     char modulePath[MAX_PATH];
+    krb5_error_code code;
     DWORD result = GetModuleFileName(AfxGetInstanceHandle(), modulePath, MAX_PATH);
     ASSERT(result);
 
@@ -186,13 +194,20 @@ BOOL CLeashApp::InitInstance()
     HWND hMsg = GetForegroundWindow();
     if (!InitDLLs())
         return FALSE; //exit program, can't load LEASHDLL
+    code = pkrb5_init_context(&m_krbv5_context);
+    if (code) {
+        // @TODO: report error
+        return FALSE;
+    }
 
     // Check for args (switches)
     LPCTSTR exeFile		= __targv[0];
-    LPCTSTR optionParam =  __targv[1];
+    for (int argi = 1; argi < __argc; argi++) {
+        LPCTSTR optionParam =  __targv[argi];
 
-    if (optionParam)
-    {
+        if (!optionParam)
+            continue;
+
         if (*optionParam  == '-' || *optionParam  == '/')
         {
             if (0 == stricmp(optionParam+1, "kinit") ||
@@ -202,17 +217,12 @@ BOOL CLeashApp::InitInstance()
 		char username[64]="";
 		char realm[192]="";
 		int i=0, j=0;
-                TicketList* ticketList = NULL;
                 if (WaitForSingleObject( ticketinfo.lockObj, INFINITE ) != WAIT_OBJECT_0)
                     throw("Unable to lock ticketinfo");
 
-                pLeashKRB5GetTickets(&ticketinfo.Krb5, &ticketList,
-                                      &CLeashApp::m_krbv5_context);
-                pLeashFreeTicketList(&ticketList);
-                pLeashKRB4GetTickets(&ticketinfo.Krb4, &ticketList);
-                pLeashFreeTicketList(&ticketList);
+                LeashKRB5ListDefaultTickets(&ticketinfo.Krb5);
 
-                if ( ticketinfo.Krb5.btickets && ticketinfo.Krb5.principal[0] ) {
+                if ( ticketinfo.Krb5.btickets && ticketinfo.Krb5.principal ) {
                     for (; ticketinfo.Krb5.principal[i] && ticketinfo.Krb5.principal[i] != '@'; i++)
                     {
                         username[i] = ticketinfo.Krb5.principal[i];
@@ -225,25 +235,15 @@ BOOL CLeashApp::InitInstance()
                         }
                     }
                     realm[j] = '\0';
-                } else if ( ticketinfo.Krb4.btickets && ticketinfo.Krb4.principal[0] ) {
-                    for (; ticketinfo.Krb4.principal[i] && ticketinfo.Krb4.principal[i] != '@'; i++)
-                    {
-                        username[i] = ticketinfo.Krb4.principal[i];
-                    }
-                    username[i] = '\0';
-                    if (ticketinfo.Krb4.principal[i]) {
-                        for (i++ ; ticketinfo.Krb4.principal[i] ; i++, j++)
-                        {
-                            realm[j] = ticketinfo.Krb4.principal[i];
-                        }
-                    }
-                    realm[j] = '\0';
                 }
+
+                LeashKRB5FreeTicketInfo(&ticketinfo.Krb5);
+
                 ReleaseMutex(ticketinfo.lockObj);
 
 				ldi.size = LSH_DLGINFO_EX_V1_SZ;
 				ldi.dlgtype = DLGTYPE_PASSWD;
-                ldi.title = "Initialize Ticket";
+                ldi.title = "MIT Kerberos: Get Ticket";
                 ldi.username = username;
 				ldi.realm = realm;
                 ldi.dlgtype = DLGTYPE_PASSWD;
@@ -311,6 +311,10 @@ BOOL CLeashApp::InitInstance()
             {
                 CreateConsoleEcho();
             }
+            else if (0 == stricmp(optionParam+1, "noribbon"))
+            {
+                m_useRibbon = FALSE;
+            }
             else
             {
                 MessageBox(hMsg,
@@ -320,7 +324,7 @@ BOOL CLeashApp::InitInstance()
                             "'-autoinit' or '-a' to perform automatic ticket initialization\n"
                             "'-console' or '-c' to attach a console for debugging\n"
                             "'-ms2mit' or '-import' or '-m' to perform ticket importation (and exit)",
-                           "Leash Error", MB_OK);
+                           "MIT Kerberos Error", MB_OK);
                 return FALSE;
             }
         }
@@ -332,13 +336,16 @@ BOOL CLeashApp::InitInstance()
                         "'-destroy' or '-d' to perform ticket destruction (and exit)\n"
                         "'-autoinit' or '-a' to perform automatic ticket initialization\n"
                         "'-ms2mit' or '-import' or '-m' to perform ticket importation (and exit)",
-                       "Leash Error", MB_OK);
+                       "MIT Kerberos Error", MB_OK);
             return FALSE;
         }
     }
 
     // Insure only one instance of Leash
     if (!FirstInstance())
+        return FALSE;
+
+    if (!CWinAppEx::InitInstance())
         return FALSE;
 
     //register our unique wnd class name to find it later
@@ -379,7 +386,7 @@ BOOL CLeashApp::InitInstance()
     // Registry key under which our settings are stored.
     if (m_pszAppName)
         free((void*)m_pszAppName);
-    m_pszAppName = _tcsdup("Leash32");
+    m_pszAppName = _tcsdup("MIT Kerberos");
     SetRegistryKey(_T("MIT"));
 
     LoadStdProfileSettings(); // Load standard INI file options (including MRU)
@@ -406,14 +413,11 @@ BOOL CLeashApp::InitInstance()
     // Check to see if there are any tickets in the cache
     // If not and the Windows Logon Session is Kerberos authenticated attempt an import
     {
-        TicketList* ticketList = NULL;
         if (WaitForSingleObject( ticketinfo.lockObj, INFINITE ) != WAIT_OBJECT_0)
             throw("Unable to lock ticketinfo");
-        pLeashKRB5GetTickets(&ticketinfo.Krb5, &ticketList, &CLeashApp::m_krbv5_context);
-        pLeashFreeTicketList(&ticketList);
-        pLeashKRB4GetTickets(&ticketinfo.Krb4, &ticketList);
-        pLeashFreeTicketList(&ticketList);
-        BOOL b_autoinit = !ticketinfo.Krb4.btickets && !ticketinfo.Krb5.btickets;
+        LeashKRB5ListDefaultTickets(&ticketinfo.Krb5);
+        BOOL b_autoinit = !ticketinfo.Krb5.btickets;
+        LeashKRB5FreeTicketInfo(&ticketinfo.Krb5);
         ReleaseMutex(ticketinfo.lockObj);
 
         DWORD dwMsLsaImport = pLeash_get_default_mslsa_import();
@@ -478,7 +482,7 @@ BOOL CLeashApp::InitInstance()
     VScheckVersion(m_pMainWnd->m_hWnd, AfxGetInstanceHandle());
 
     // The one and only window has been initialized, so show and update it.
-    m_pMainWnd->SetWindowText("Leash");
+    m_pMainWnd->SetWindowText("MIT Kerberos");
     m_pMainWnd->UpdateWindow();
     m_pMainWnd->ShowWindow(SW_SHOW);
     m_pMainWnd->SetForegroundWindow();
@@ -494,9 +498,7 @@ BOOL CLeashApp::InitInstance()
 
 // leash functions
 DECL_FUNC_PTR(not_an_API_LeashKRB4GetTickets);
-DECL_FUNC_PTR(not_an_API_LeashKRB5GetTickets);
 DECL_FUNC_PTR(not_an_API_LeashAFSGetToken);
-DECL_FUNC_PTR(not_an_API_LeashFreeTicketList);
 DECL_FUNC_PTR(not_an_API_LeashGetTimeServerName);
 DECL_FUNC_PTR(Leash_kdestroy);
 DECL_FUNC_PTR(Leash_changepwd_dlg);
@@ -543,9 +545,7 @@ DECL_FUNC_PTR(Leash_reset_defaults);
 
 FUNC_INFO leash_fi[] = {
     MAKE_FUNC_INFO(not_an_API_LeashKRB4GetTickets),
-    MAKE_FUNC_INFO(not_an_API_LeashKRB5GetTickets),
     MAKE_FUNC_INFO(not_an_API_LeashAFSGetToken),
-    MAKE_FUNC_INFO(not_an_API_LeashFreeTicketList),
     MAKE_FUNC_INFO(not_an_API_LeashGetTimeServerName),
     MAKE_FUNC_INFO(Leash_kdestroy),
     MAKE_FUNC_INFO(Leash_changepwd_dlg),
@@ -625,6 +625,12 @@ FUNC_INFO krb4_fi[] = {
 };
 #endif
 
+// com_err funcitons
+DECL_FUNC_PTR(error_message);
+FUNC_INFO ce_fi[] =  {
+    MAKE_FUNC_INFO(error_message),
+    END_FUNC_INFO
+};
 
 // psapi functions
 DECL_FUNC_PTR(GetModuleFileNameExA);
@@ -669,6 +675,27 @@ DECL_FUNC_PTR(krb5_free_cred_contents);
 DECL_FUNC_PTR(krb5_cc_resolve);
 DECL_FUNC_PTR(krb5_unparse_name);
 DECL_FUNC_PTR(krb5_free_unparsed_name);
+DECL_FUNC_PTR(krb5_cc_destroy);
+DECL_FUNC_PTR(krb5_cccol_cursor_new);
+DECL_FUNC_PTR(krb5_cccol_cursor_free);
+DECL_FUNC_PTR(krb5_cccol_cursor_next);
+DECL_FUNC_PTR(krb5_cc_start_seq_get);
+DECL_FUNC_PTR(krb5_cc_next_cred);
+DECL_FUNC_PTR(krb5_cc_end_seq_get);
+DECL_FUNC_PTR(krb5_cc_get_name);
+DECL_FUNC_PTR(krb5_cc_set_flags);
+DECL_FUNC_PTR(krb5_is_config_principal);
+DECL_FUNC_PTR(krb5_free_ticket);
+DECL_FUNC_PTR(krb5_decode_ticket);
+DECL_FUNC_PTR(krb5_cc_switch);
+DECL_FUNC_PTR(krb5_build_principal_ext);
+DECL_FUNC_PTR(krb5_get_renewed_creds);
+DECL_FUNC_PTR(krb5_cc_initialize);
+DECL_FUNC_PTR(krb5_cc_store_cred);
+DECL_FUNC_PTR(krb5_cc_get_full_name);
+DECL_FUNC_PTR(krb5_enctype_to_name);
+DECL_FUNC_PTR(krb5_cc_get_type);
+DECL_FUNC_PTR(krb5int_cc_user_set_default_name);
 
 FUNC_INFO krb5_fi[] = {
     MAKE_FUNC_INFO(krb5_cc_default_name),
@@ -691,6 +718,27 @@ FUNC_INFO krb5_fi[] = {
     MAKE_FUNC_INFO(krb5_cc_resolve),
     MAKE_FUNC_INFO(krb5_unparse_name),
     MAKE_FUNC_INFO(krb5_free_unparsed_name),
+    MAKE_FUNC_INFO(krb5_cc_destroy),
+    MAKE_FUNC_INFO(krb5_cccol_cursor_new),
+    MAKE_FUNC_INFO(krb5_cccol_cursor_next),
+    MAKE_FUNC_INFO(krb5_cccol_cursor_free),
+    MAKE_FUNC_INFO(krb5_cc_start_seq_get),
+    MAKE_FUNC_INFO(krb5_cc_next_cred),
+    MAKE_FUNC_INFO(krb5_cc_end_seq_get),
+    MAKE_FUNC_INFO(krb5_cc_get_name),
+    MAKE_FUNC_INFO(krb5_cc_set_flags),
+    MAKE_FUNC_INFO(krb5_is_config_principal),
+    MAKE_FUNC_INFO(krb5_free_ticket),
+    MAKE_FUNC_INFO(krb5_decode_ticket),
+    MAKE_FUNC_INFO(krb5_cc_switch),
+    MAKE_FUNC_INFO(krb5_build_principal_ext),
+    MAKE_FUNC_INFO(krb5_get_renewed_creds),
+    MAKE_FUNC_INFO(krb5_cc_initialize),
+    MAKE_FUNC_INFO(krb5_cc_store_cred),
+    MAKE_FUNC_INFO(krb5_cc_get_full_name),
+    MAKE_FUNC_INFO(krb5_enctype_to_name),
+    MAKE_FUNC_INFO(krb5_cc_get_type),
+    MAKE_FUNC_INFO(krb5int_cc_user_set_default_name),
     END_FUNC_INFO
 };
 
@@ -738,6 +786,7 @@ BOOL CLeashApp::InitDLLs()
 #endif
     m_hKrb5DLL = AfxLoadLibrary(KERB5DLL);
     m_hKrb5ProfileDLL = AfxLoadLibrary(KERB5_PPROFILE_DLL);
+    m_hComErr = AfxLoadLibrary(COMERR_DLL);
 
 #ifndef NO_AFS
     afscompat_init();
@@ -767,6 +816,12 @@ BOOL CLeashApp::InitDLLs()
         return FALSE;
     }
 
+    if (!LoadFuncs(COMERR_DLL, ce_fi, &m_hComErr, 0, 0, 1, 0)) {
+        MessageBox(hwnd,
+                   "Functions within " COMERR_DLL "didn't load properly!",
+                   "Error", MB_OK);
+        return FALSE;
+    }
 ////
 #ifndef NO_KRB4
     if (m_hKrb4DLL)
@@ -1440,35 +1495,23 @@ CLeashApp::ProbeKDC(void)
 VOID
 CLeashApp::ObtainTicketsViaUserIfNeeded(HWND hWnd)
 {
-    TicketList* ticketList = NULL;
     if (WaitForSingleObject( ticketinfo.lockObj, INFINITE ) != WAIT_OBJECT_0)
         throw("Unable to lock ticketinfo");
-    pLeashKRB5GetTickets(&ticketinfo.Krb5, &ticketList, &CLeashApp::m_krbv5_context);
-    pLeashFreeTicketList(&ticketList);
-    pLeashKRB4GetTickets(&ticketinfo.Krb4, &ticketList);
-    pLeashFreeTicketList(&ticketList);
+    LeashKRB5ListDefaultTickets(&ticketinfo.Krb5);
+    int btickets = ticketinfo.Krb5.btickets;
+    LeashKRB5FreeTicketInfo(&ticketinfo.Krb5);
+    ReleaseMutex(ticketinfo.lockObj);
 
-    if ( !ticketinfo.Krb4.btickets && !ticketinfo.Krb5.btickets ) {
-        ReleaseMutex(ticketinfo.lockObj);
-#ifndef KRB5_TC_NOTICKET
-        if (WaitForSingleObject( m_tgsReqMutex, INFINITE ) != WAIT_OBJECT_0)
-            throw("Unable to lock TGS mutex");
-#endif
+    if ( !btickets ) {
         if ( pLeash_importable() ) {
             if (pLeash_import())
                 CLeashView::m_importedTickets = 1;
-#ifndef KRB5_TC_NOTICKET
-            ReleaseMutex(m_tgsReqMutex);
-#endif
         }
         else if ( ProbeKDC() ) {
-#ifndef KRB5_TC_NOTICKET
-            ReleaseMutex(m_tgsReqMutex);
-#endif
             LSH_DLGINFO_EX ldi;
             ldi.size = LSH_DLGINFO_EX_V1_SZ;
             ldi.dlgtype = DLGTYPE_PASSWD;
-            ldi.title = "Initialize Ticket";
+            ldi.title = "MIT Kerberos: Get Ticket";
             ldi.username = NULL;
             ldi.realm = NULL;
             ldi.dlgtype = DLGTYPE_PASSWD;
@@ -1476,32 +1519,16 @@ CLeashApp::ObtainTicketsViaUserIfNeeded(HWND hWnd)
 
             pLeash_kinit_dlg_ex(hWnd, &ldi);
         }
-#ifndef KRB5_TC_NOTICKET
-        else {
-            ReleaseMutex(m_tgsReqMutex);
-        }
-#endif
-    } else if ( ticketinfo.Krb5.btickets ) {
-        ReleaseMutex(ticketinfo.lockObj);
-#ifndef KRB5_TC_NOTICKET
-        if (WaitForSingleObject( m_tgsReqMutex, INFINITE ) != WAIT_OBJECT_0)
-            throw("Unable to TGS mutex");
-#endif
+    } else {
         if ( CLeashView::m_importedTickets && pLeash_importable() ) {
             if (pLeash_import())
                 CLeashView::m_importedTickets = 1;
-#ifndef KRB5_TC_NOTICKET
-            ReleaseMutex(m_tgsReqMutex);
-#endif
         }
         else if ( ProbeKDC() && !pLeash_renew() ) {
-#ifndef KRB5_TC_NOTICKET
-            ReleaseMutex(m_tgsReqMutex);
-#endif
             LSH_DLGINFO_EX ldi;
             ldi.size = LSH_DLGINFO_EX_V1_SZ;
             ldi.dlgtype = DLGTYPE_PASSWD;
-            ldi.title = "Initialize Ticket";
+            ldi.title = "MIT Kerberos: Get Ticket";
             ldi.username = NULL;
             ldi.realm = NULL;
             ldi.dlgtype = DLGTYPE_PASSWD;
@@ -1509,40 +1536,6 @@ CLeashApp::ObtainTicketsViaUserIfNeeded(HWND hWnd)
 
             pLeash_kinit_dlg_ex(hWnd, &ldi);
         }
-#ifndef KRB5_TC_NOTICKET
-        else {
-            ReleaseMutex(m_tgsReqMutex);
-        }
-#endif
-    } else if ( ticketinfo.Krb4.btickets ) {
-        ReleaseMutex(ticketinfo.lockObj);
-#ifndef KRB5_TC_NOTICKET
-        if (WaitForSingleObject( m_tgsReqMutex, INFINITE ) != WAIT_OBJECT_0)
-            throw("Unable to lock TGS mutex");
-#endif
-        if ( ProbeKDC() ) {
-#ifndef KRB5_TC_NOTICKET
-            ReleaseMutex(m_tgsReqMutex);
-#endif
-            LSH_DLGINFO_EX ldi;
-            ldi.size = LSH_DLGINFO_EX_V1_SZ;
-            ldi.dlgtype = DLGTYPE_PASSWD;
-            ldi.title = "Initialize Ticket";
-            ldi.username = NULL;
-            ldi.realm = NULL;
-            ldi.dlgtype = DLGTYPE_PASSWD;
-            ldi.use_defaults = 1;
-
-            pLeash_kinit_dlg_ex(hWnd, &ldi);
-        }
-#ifndef KRB5_TC_NOTICKET
-        else {
-            ReleaseMutex(m_tgsReqMutex);
-        }
-#endif
-    } else {
-        ReleaseMutex(ticketinfo.lockObj);
-        // Do nothing ...
     }
     return;
 }
@@ -1617,10 +1610,6 @@ CLeashApp::IpAddrChangeMonitorInit(HWND hWnd)
 UINT
 CLeashApp::InitWorker(void * hWnd)
 {
-#ifndef KRB5_TC_NOTICKET
-    if (WaitForSingleObject( m_tgsReqMutex, INFINITE ) != WAIT_OBJECT_0)
-        throw("Unable to lock tgsReq");
-#endif
     if ( ProbeKDC() ) {
         LSH_DLGINFO_EX ldi;
         ldi.size = LSH_DLGINFO_EX_V1_SZ;
@@ -1630,16 +1619,9 @@ CLeashApp::InitWorker(void * hWnd)
         ldi.realm = NULL;
         ldi.use_defaults = 1;
 
-#ifndef KRB5_TC_NOTICKET
-        ReleaseMutex(m_tgsReqMutex);
-#endif
         pLeash_kinit_dlg_ex((HWND)hWnd, &ldi);
         ::SendMessage((HWND)hWnd, WM_COMMAND, ID_UPDATE_DISPLAY, 0);
     }
-#ifndef KRB5_TC_NOTICKET
-    else
-        ReleaseMutex(m_tgsReqMutex);
-#endif
     return 0;
 }
 
@@ -1660,3 +1642,15 @@ CLeashApp::WinHelp(DWORD dwData, UINT nCmd)
 }
 #endif
 #endif
+
+
+BOOL CLeashApp::OnIdle(LONG lCount)
+{
+    // TODO: Add your specialized code here and/or call the base class
+    BOOL retval = CWinAppEx::OnIdle(lCount);
+    if ((lCount == 0) && m_bUpdateDisplay) {
+        m_bUpdateDisplay = FALSE;
+        m_pMainWnd->SendMessage(WM_COMMAND, ID_UPDATE_DISPLAY, 0);
+    }
+    return retval;
+}

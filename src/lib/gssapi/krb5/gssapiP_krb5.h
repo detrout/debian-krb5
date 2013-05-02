@@ -172,7 +172,7 @@ typedef struct _krb5_gss_cred_id_rec {
     /* name/type of credential */
     gss_cred_usage_t usage;
     krb5_gss_name_t name;
-    unsigned int proxy_cred : 1;
+    krb5_principal impersonator;
     unsigned int default_identity : 1;
     unsigned int iakerb_mech : 1;
     unsigned int destroy_ccache : 1;
@@ -183,9 +183,12 @@ typedef struct _krb5_gss_cred_id_rec {
 
     /* ccache (init) data */
     krb5_ccache ccache;
-    krb5_timestamp tgt_expire;
+    krb5_keytab client_keytab;
+    krb5_boolean have_tgt;
+    krb5_timestamp expire;
+    krb5_timestamp refresh_time;
     krb5_enctype *req_enctypes;  /* limit negotiated enctypes to this list */
-    krb5_data password;
+    char *password;
 } krb5_gss_cred_id_rec, *krb5_gss_cred_id_t;
 
 typedef struct _krb5_gss_ctx_ext_rec {
@@ -199,7 +202,6 @@ typedef struct _krb5_gss_ctx_id_rec {
     krb5_magic magic;
     unsigned int initiate : 1;   /* nonzero if initiating, zero if accepting */
     unsigned int established : 1;
-    unsigned int big_endian : 1;
     unsigned int have_acceptor_subkey : 1;
     unsigned int seed_init : 1;  /* XXX tested but never actually set */
     OM_uint32 gss_flags;
@@ -253,8 +255,7 @@ OM_uint32 kg_get_defcred
 
 krb5_error_code kg_checksum_channel_bindings
 (krb5_context context, gss_channel_bindings_t cb,
- krb5_checksum *cksum,
- int bigend);
+ krb5_checksum *cksum);
 
 krb5_error_code kg_make_seq_num (krb5_context context,
                                  krb5_key key,
@@ -477,6 +478,13 @@ krb5_error_code
 krb5_to_gss_cred(krb5_context context,
                  krb5_creds *creds,
                  krb5_gss_cred_id_t *out_cred);
+
+krb5_boolean
+kg_cred_time_to_refresh(krb5_context context, krb5_gss_cred_id_rec *cred);
+
+void
+kg_cred_set_initial_refresh(krb5_context context, krb5_gss_cred_id_rec *cred,
+                            krb5_ticket_times *times);
 
 OM_uint32
 kg_cred_resolve(OM_uint32 *minor_status, krb5_context context,
@@ -1196,7 +1204,7 @@ data_to_gss(krb5_data *input_k5data, gss_buffer_t output_buffer)
 {
     krb5_error_code code = 0;
     output_buffer->length = input_k5data->length;
-#ifdef _WIN32
+#if defined(_WIN32) || defined(DEBUG_GSSALLOC)
     if (output_buffer->length > 0) {
         output_buffer->value = gssalloc_malloc(output_buffer->length);
         if (output_buffer->value)
@@ -1215,5 +1223,51 @@ data_to_gss(krb5_data *input_k5data, gss_buffer_t output_buffer)
 }
 
 #define KRB5_GSS_EXTS_IAKERB_FINISHED 1
+
+
+/* Credential store extensions */
+
+#define KRB5_CS_KEYTAB_URN "keytab"
+#define KRB5_CS_CCACHE_URN "ccache"
+
+OM_uint32
+kg_value_from_cred_store(gss_const_key_value_set_t cred_store,
+                         const char *type, const char **value);
+
+OM_uint32 KRB5_CALLCONV
+krb5_gss_acquire_cred_from(
+    OM_uint32 *,               /* minor_status */
+    const gss_name_t,          /* desired_name */
+    OM_uint32,                 /* time_req */
+    const gss_OID_set,         /* desired_mechs */
+    gss_cred_usage_t,          /* cred_usage */
+    gss_const_key_value_set_t, /* cred_store */
+    gss_cred_id_t *,           /* output_cred_handle */
+    gss_OID_set *,             /* actual_mechs */
+    OM_uint32 *);              /* time_rec */
+
+OM_uint32 KRB5_CALLCONV
+krb5_gss_store_cred_into(
+    OM_uint32 *,               /* minor_status */
+    gss_cred_id_t,             /* input_cred_handle */
+    gss_cred_usage_t,          /* input_usage */
+    const gss_OID,             /* desired_mech */
+    OM_uint32,                 /* overwrite_cred */
+    OM_uint32,                 /* default_cred */
+    gss_const_key_value_set_t, /* cred_store */
+    gss_OID_set *,             /* elements_stored */
+    gss_cred_usage_t *);       /* cred_usage_stored */
+
+OM_uint32 KRB5_CALLCONV
+krb5_gss_export_cred(OM_uint32 *minor_status, gss_cred_id_t cred_handle,
+                     gss_buffer_t token);
+
+OM_uint32 KRB5_CALLCONV
+krb5_gss_import_cred(OM_uint32 *minor_status, gss_buffer_t token,
+                     gss_cred_id_t *cred_handle);
+
+/* Magic string to identify exported krb5 GSS credentials.  Increment this if
+ * the format changes. */
+#define CRED_EXPORT_MAGIC "K5C1"
 
 #endif /* _GSSAPIP_KRB5_H_ */

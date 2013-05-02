@@ -152,9 +152,7 @@
 	                    <Registry Id="reg_ts_krbcc32s_1" Root="HKLM" Key="Software\Microsoft\Windows NT\CurrentVersion\Terminal Server\Compatibility\Applications\ccapiserver" Name="Flags" Type="integer" Value="1032" />
                     </Component>
                     <Component Win64="$(var.Win64)" Id="cmf_leash_exe" Guid="$(var.cmf_leash_exe_guid)" DiskId="1">
-                      <File Id="fil_leash_exe" Name="leash.exe" KeyPath="yes">
-                        <Shortcut Id="sc_leash_exe" Advertise="yes" Directory="dirShortcut" Name="Leash Kerberos Ticket Manager.lnk" Arguments="[LEASHAUTOINIT]" />
-                        <Shortcut Id="sc_leash_desktop_exe" Advertise="yes" Directory="DesktopFolder" Name="Leash Kerberos Ticket Manager.lnk" Arguments="[LEASHAUTOINIT]" />
+                      <File Id="fil_leash_exe" Name="MIT Kerberos.exe" KeyPath="yes">
                       </File>
                       <Registry Id="reg_ts_leash32_0" Root="HKLM" Key="Software\Microsoft\Windows NT\CurrentVersion\Terminal Server\Compatibility\Applications\leash32" Action="createKeyAndRemoveKeyOnUninstall" />
 	                    <Registry Id="reg_ts_leash32_1" Root="HKLM" Key="Software\Microsoft\Windows NT\CurrentVersion\Terminal Server\Compatibility\Applications\leash32" Name="Flags" Type="integer" Value="1032" />
@@ -191,14 +189,13 @@
 	                    <Registry Id="reg_leash_6" Root="HKLM" Key="Software\MIT\Leash" Name="MsLsaImport" Type="integer" Value="[LEASHMSLSAIMPORT]" KeyPath="yes"/>
 	                    <Condition>LEASHMSLSAIMPORT</Condition>
                     </Component>
-<!--                    <Component Win64="$(var.Win64)" Id="csc_LeashStartup" Guid="$(var.csc_LeashStartup_guid)" DiskId="1">
-                        <Registry Id="reg_sc_leash_marker" Root="HKLM" Key="$(var.KfwRegRoot)\Client\$(var.VersionString)" Name="LeashAutoStart" Type="integer" Value="1" KeyPath="yes" />
-                        <Shortcut Id="sc_leash_exe_startup" Advertise="no" Directory="StartupFolder" Name="Leash Credentials Manager.lnk" Arguments="[LEASHAUTOINIT]" Target="[dirbin]leash32.exe" Show="minimized" />
-                        <Condition>USELEASH</Condition>
-                    </Component> -->
+                    <Component Win64="$(var.Win64)" Id="csc_LeashStartup" Guid="$(var.csc_LeashStartup_guid)" DiskId="1">
+                        <Registry Id="reg_sc_leash_marker" Root="HKCU" Key="$(var.KfwRegRoot)\Client\$(var.VersionString)" Name="LeashAutoStart" Type="integer" Value="1" KeyPath="yes" />
+                        <Shortcut Id="sc_leash_exe_startup" Advertise="no" Directory="StartupFolder" Name="MIT Kerberos.lnk" Arguments="[LEASHAUTOINIT]" Target="[dirbin]MIT Kerberos.exe" Show="minimized" />
+                    </Component>
 
                     <Component Win64="$(var.Win64)" Id="cmf_leash32_chm" Guid="$(var.cmf_leash32_chm_guid)" DiskId="1">
-	                    <File Id="fil_leash32_chm" Name="leash.chm" KeyPath="yes" />
+	                    <File Id="fil_leash32_chm" Name="MIT Kerberos.chm" KeyPath="yes" />
                     </Component>
                     
                     <Component Win64="$(var.Win64)" Id="cmf_leashw32_dll" Guid="$(var.cmf_leashw32_dll_guid)" DiskId="1">
@@ -292,8 +289,34 @@
                     <Component Win64="$(var.Win64)" Id="cmf_xpprof32_dll" Guid="$(var.cmf_xpprof32_dll_guid)" DiskId="1">
 	                    <File Id="fil_xpprof32_dll" Name="$(var.cmf_xpprof32_dll_name)" KeyPath="yes" />
                     </Component>
-                    
-                    <!-- Debug symbols -->
+                  <?if $(var.Platform) = "x64"?>
+                    <Component Win64="$(var.Win64)" Id="cmf_krb5_64_dll" Guid="$(var.cmf_krb5_64_dll_guid)" DiskId="1">
+                      <File Id="fil_krb5_64_dll" Name="$(var.cmf_krb5_64_dll_name)" KeyPath="yes" />
+                    </Component>
+                    <Component Win64="$(var.Win64)" Id="cmf_k5sprt64_dll" Guid="$(var.cmf_k5sprt64_dll_guid)" DiskId="1">
+                      <File Id="fil_k5sprt64_dll" Name="$(var.cmf_k5sprt64_dll_name)" />
+                    </Component>
+                    <Component Win64="$(var.Win64)" Id="cmf_krbcc64_dll" Guid="$(var.cmf_krbcc64_dll_guid)" DiskId="1">
+                      <File Id="fil_krbcc64_dll" Name="$(var.cmf_krbcc64_dll_name)" KeyPath="yes" />
+                    </Component>
+                    <Component Win64="$(var.Win64)" Id="cmf_gssapi64_dll" Guid="$(var.cmf_gssapi64_dll_guid)" DiskId="1">
+                      <File Id="fil_gssapi64_dll" Name="$(var.cmf_gssapi64_dll_name)" KeyPath="yes" />
+                    </Component>
+                    <Component Win64="$(var.Win64)" Id="cmf_comerr64_dll" Guid="$(var.cmf_comerr64_dll_guid)" DiskId="1">
+                      <File Id="fil_comerr64_dll" Name="$(var.cmf_comerr64_dll_name)" KeyPath="yes" />
+                    </Component>
+                    <Component Win64="$(var.Win64)" Id="cmf_leashw64_dll" Guid="$(var.cmf_leashw64_dll_guid)" DiskId="1">
+                      <File Id="fil_leashw64_dll" Name="$(var.cmf_leashw64_dll_name)" KeyPath="yes" />
+                    </Component>
+                    <Component Win64="$(var.Win64)" Id="cmf_wshelp64_dll" Guid="$(var.cmf_wshelp64_dll_guid)" DiskId="1">
+                      <File Id="fil_wshelp64_dll" Name="$(var.cmf_wshelp64_dll_name)" KeyPath="yes" />
+                    </Component>
+                    <Component Win64="$(var.Win64)" Id="cmf_xpprof64_dll" Guid="$(var.cmf_xpprof64_dll_guid)" DiskId="1">
+                      <File Id="fil_xpprof64_dll" Name="$(var.cmf_xpprof64_dll_name)" KeyPath="yes" />
+                    </Component>
+                  <?endif?>
+
+                  <!-- Debug symbols -->
                 <?ifdef DebugSyms?>
                     <Component Win64="$(var.Win64)" Id="cmf_bin_debug" Guid="$(var.cmf_bin_debug_guid)" DiskId="1">
                         <?if $(var.Platform) = "Intel" ?>
@@ -331,11 +354,7 @@
 	                    <File Id="fil_mit2ms_pdb" Name="mit2ms.pdb" />
                     </Component>
                 <?endif?>
-                
-                    <Component Win64="$(var.Win64)" Id="cmf_psapi_dll" Guid="877F4DD5-8AE0-451C-8F4D-C27F6F30D221" DiskId="1">
-	                    <File Id="fil_psapi_dll" Name="psapi.dll" src="$(var.SystemDir)psapi.dll" KeyPath="yes" />
-                    </Component>
-                
+
                 </Directory> <!-- /bin -->
                 
                 <Directory Id="dirinc" Name="include" src="$(var.IncDir)">
@@ -440,7 +459,6 @@
       <Directory Id="APPDATAMITDIR" Name="MIT">
         <Directory Id="APPDATAKERBEROS5DIR" Name="Kerberos5">
           <Component Win64="$(var.Win64)" Id="cmf_krb5_ini" Guid="C1AF0670-BBF1-4AA6-B2A6-6C8B1584A1F4" NeverOverwrite="yes" Permanent="yes" DiskId="1">
-            <Condition>NOT SYSTEMKRB5INI</Condition>
             <File Id="fil_krb5_ini" Name="krb5.ini" src="$(var.ConfigDir)krb5.ini" KeyPath="yes" />
             <CreateFolder/>
           </Component>
@@ -448,14 +466,11 @@
       </Directory>
     </Directory>
     
+    <!-- Start Menu shortcut -->
     <Directory Id="ProgramMenuFolder">
-        <Directory Id="dirShortcut" Name="$(var.BaseProductName)">
-          <Component Id="cmf_remove_folder" Guid="BAE73197-1894-4fff-86B9-EFFB78A24CA2">
-            <Registry Id="reg_bogus" Root="HKCU" Key="Software\MIT\Kerberos5" Name="omfg" Type="string" Value="sigh" KeyPath="yes"/>
-            <RemoveFolder Id="removeFolder" On ="uninstall" />
-          </Component>
-        </Directory>
+        <Directory Id="dirShortcut" Name="$(var.BaseProductName)" />
     </Directory>
+
     <Directory Id="StartupFolder">
     </Directory>
     
@@ -471,6 +486,20 @@
     <?else?>
         <Registry Id="reg_common7" Root="HKLM" Key="$(var.KfwRegRoot)\CurrentVersion" Action="removeKeyOnInstall"/>
         <Registry Id="reg_common8" Root="HKLM" Key="$(var.KfwRegRoot)\$(var.VersionString)" Action="removeKeyOnInstall"/>
+    <?endif?>
+    <?if $(var.Platform) = "x64"?>
+        <Registry Id="reg_common0_32" Root="HKLM" Key="$(var.KfwRegWow6432Root)" Action="createKeyAndRemoveKeyOnUninstall" />
+        <!-- Cannot set KeyPath twice in one Component -->
+        <Registry Id="reg_common2_32" Root="HKLM" Key="$(var.KfwRegWow6432Root)" Name="InstallDir" Type="string" Value="[KERBEROSDIR]"/>
+    <?ifdef Debug?>
+        <Registry Id="reg_common3_32" Root="HKLM" Key="$(var.KfwRegWow6432Root)\CurrentVersion" Action="createKeyAndRemoveKeyOnUninstall"/>
+        <Registry Id="reg_common4_32" Root="HKLM" Key="$(var.KfwRegWow6432Root)\CurrentVersion" Name="Debug" Type="integer" Value="1"/>
+        <Registry Id="reg_common5_32" Root="HKLM" Key="$(var.KfwRegWow6432Root)\$(var.VersionString)" Action="createKeyAndRemoveKeyOnUninstall"/>
+        <Registry Id="reg_common6_32" Root="HKLM" Key="$(var.KfwRegWow6432Root)\$(var.VersionString)" Name="Debug" Type="integer" Value="1"/>
+    <?else?>
+        <Registry Id="reg_common7_32" Root="HKLM" Key="$(var.KfwRegWow6432Root)\CurrentVersion" Action="removeKeyOnInstall"/>
+        <Registry Id="reg_common8_32" Root="HKLM" Key="$(var.KfwRegWow6432Root)\$(var.VersionString)" Action="removeKeyOnInstall"/>
+    <?endif?>
     <?endif?>
     </Component>
     
@@ -562,26 +591,50 @@
       <?endif?>
       <?if $(var.Platform) = "x64" ?>
         <?ifndef Debug?>
-          <Merge Id="MSVCRT100MEM" DiskId="1" Language="0" src="$(var.CPF)\Merge Modules\Microsoft_VC100_CRT_x64.msm"/>
-          <Merge Id="MSVCRT100MFC" DiskId="1" Language="0" src="$(var.CPF)\Merge Modules\Microsoft_VC100_MFC_x64.msm"/>
-          <Merge Id="MSVCRT100MFL" DiskId="1" Language="0" src="$(var.CPF)\Merge Modules\Microsoft_VC100_MFCLOC_x64.msm"/>
+          <Merge Id="MSVCRT100MEM64" DiskId="1" Language="0" src="$(var.CPF)\Merge Modules\Microsoft_VC100_CRT_x64.msm"/>
+          <Merge Id="MSVCRT100MFC64" DiskId="1" Language="0" src="$(var.CPF)\Merge Modules\Microsoft_VC100_MFC_x64.msm"/>
+          <Merge Id="MSVCRT100MFL64" DiskId="1" Language="0" src="$(var.CPF)\Merge Modules\Microsoft_VC100_MFCLOC_x64.msm"/>
+          <Merge Id="MSVCRT100MEM86" DiskId="1" Language="0" src="$(var.CPF)\Merge Modules\Microsoft_VC100_CRT_x86.msm"/>
+          <Merge Id="MSVCRT100MFC86" DiskId="1" Language="0" src="$(var.CPF)\Merge Modules\Microsoft_VC100_MFC_x86.msm"/>
+          <Merge Id="MSVCRT100MFL86" DiskId="1" Language="0" src="$(var.CPF)\Merge Modules\Microsoft_VC100_MFCLOC_x86.msm"/>
         <?else?>
-          <Merge Id="MSVCRT100MEM" DiskId="1" Language="0" src="$(var.CPF)\Merge Modules\Microsoft_VC100_DebugCRT_x64.msm"/>
-          <Merge Id="MSVCRT100MFC" DiskId="1" Language="0" src="$(var.CPF)\Merge Modules\Microsoft_VC100_DebugMFC_x64.msm"/>
-          <Merge Id="MSVCRT100MFL" DiskId="1" Language="0" src="$(var.CPF)\Merge Modules\Microsoft_VC100_MFCLOC_x64.msm"/>
+          <Merge Id="MSVCRT100MEM64" DiskId="1" Language="0" src="$(var.CPF)\Merge Modules\Microsoft_VC100_DebugCRT_x64.msm"/>
+          <Merge Id="MSVCRT100MFC64" DiskId="1" Language="0" src="$(var.CPF)\Merge Modules\Microsoft_VC100_DebugMFC_x64.msm"/>
+          <Merge Id="MSVCRT100MFL64" DiskId="1" Language="0" src="$(var.CPF)\Merge Modules\Microsoft_VC100_MFCLOC_x64.msm"/>
+          <Merge Id="MSVCRT100MEM86" DiskId="1" Language="0" src="$(var.CPF)\Merge Modules\Microsoft_VC100_DebugCRT_x86.msm"/>
+          <Merge Id="MSVCRT100MFC86" DiskId="1" Language="0" src="$(var.CPF)\Merge Modules\Microsoft_VC100_DebugMFC_x86.msm"/>
+          <Merge Id="MSVCRT100MFL86" DiskId="1" Language="0" src="$(var.CPF)\Merge Modules\Microsoft_VC100_MFCLOC_x86.msm"/>
         <?endif?>
       <?else?>
         <?ifndef Debug?>
-          <Merge Id="MSVCRT100MEM" DiskId="1" Language="0" src="$(var.CPF)\Merge Modules\Microsoft_VC100_CRT_x86.msm"/>
-          <Merge Id="MSVCRT100MFC" DiskId="1" Language="0" src="$(var.CPF)\Merge Modules\Microsoft_VC100_MFC_x86.msm"/>
-          <Merge Id="MSVCRT100MFL" DiskId="1" Language="0" src="$(var.CPF)\Merge Modules\Microsoft_VC100_MFCLOC_x86.msm"/>
+          <Merge Id="MSVCRT100MEM86" DiskId="1" Language="0" src="$(var.CPF)\Merge Modules\Microsoft_VC100_CRT_x86.msm"/>
+          <Merge Id="MSVCRT100MFC86" DiskId="1" Language="0" src="$(var.CPF)\Merge Modules\Microsoft_VC100_MFC_x86.msm"/>
+          <Merge Id="MSVCRT100MFL86" DiskId="1" Language="0" src="$(var.CPF)\Merge Modules\Microsoft_VC100_MFCLOC_x86.msm"/>
         <?else?>
-          <Merge Id="MSVCRT100MEM" DiskId="1" Language="0" src="$(var.CPF)\Merge Modules\Microsoft_VC100_DebugCRT_x86.msm"/>
-          <Merge Id="MSVCRT100MFC" DiskId="1" Language="0" src="$(var.CPF)\Merge Modules\Microsoft_VC100_DebugMFC_x86.msm"/>
-          <Merge Id="MSVCRT100MFL" DiskId="1" Language="0" src="$(var.CPF)\Merge Modules\Microsoft_VC100_MFCLOC_x86.msm"/>
+          <Merge Id="MSVCRT100MEM86" DiskId="1" Language="0" src="$(var.CPF)\Merge Modules\Microsoft_VC100_DebugCRT_x86.msm"/>
+          <Merge Id="MSVCRT100MFC86" DiskId="1" Language="0" src="$(var.CPF)\Merge Modules\Microsoft_VC100_DebugMFC_x86.msm"/>
+          <Merge Id="MSVCRT100MFL86" DiskId="1" Language="0" src="$(var.CPF)\Merge Modules\Microsoft_VC100_MFCLOC_x86.msm"/>
         <?endif?>
       <?endif?>
     <?endif?>
 
 </Directory>
+
+<!-- Start Menu shortcut -->
+<DirectoryRef Id="dirShortcut">
+    <Component Id="SMshortcut" Guid="FBB3BCED-16B7-4C5F-AE39-425B3E62503A">
+        <Shortcut Id="sc_leash_exe" Name="MIT Kerberos Ticket Manager.lnk" Target="[KERBEROSDIR]\bin\MIT Kerberos.exe" WorkingDirectory="dirbin" Arguments="[LEASHAUTOINIT]" />
+        <RemoveFolder Id="removeFolder" On ="uninstall" />
+        <RegistryValue Root="HKCU" Key="Software\MIT\Kerberos5" Name="installedStartMenu" Type="integer" Value="1" KeyPath="yes"/>
+    </Component>
+</DirectoryRef>
+<!-- Desktop shortcut -->
+<DirectoryRef Id="DesktopFolder">
+    <Component Id="Dshortcut" Guid="B1713C3F-956D-4301-A38E-3E3EFFCF6990">
+        <Shortcut Id="sc_leash_desktop_exe" Name="MIT Kerberos Ticket Manager.lnk" Target="[KERBEROSDIR]\bin\MIT Kerberos.exe" WorkingDirectory="dirbin" Arguments="[LEASHAUTOINIT]" />
+        <RemoveFolder Id="rem_fol_desktop" On="uninstall" />
+        <RegistryValue Root="HKCU" Key="Software\MIT\Kerberos5" Name="installedDesktop" Type="integer" Value="1" KeyPath="yes" />
+    </Component>
+</DirectoryRef>
+
 </Include>

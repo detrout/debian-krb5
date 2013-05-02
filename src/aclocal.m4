@@ -389,8 +389,7 @@ if test $ac_cv_func_getaddrinfo = yes; then
 fi
 dnl
 AC_REQUIRE([KRB5_SOCKADDR_SA_LEN])dnl
-AC_ARG_ENABLE([ipv6], , AC_MSG_WARN(enable/disable-ipv6 option is deprecated))dnl
-AC_MSG_CHECKING(for IPv6 compile-time support)
+AC_MSG_CHECKING(for IPv6 compile-time support without -DINET6)
 AC_CACHE_VAL(krb5_cv_inet6,[
 if test "$ac_cv_func_inet_ntop" != "yes" ; then
   krb5_cv_inet6=no
@@ -433,7 +432,6 @@ if test $krb5_cv_inet6 = yes || test "$krb5_cv_inet6_with_dinet6" = yes; then
   if test "$krb5_cv_inet6_with_dinet6" = yes; then
     AC_DEFINE(INET6,1,[May need to be defined to enable IPv6 support, for example on IRIX])
   fi
-  AC_DEFINE(KRB5_USE_INET6,1,[Define if we should compile in IPv6 support (even if we can't use it at run time)])
 fi
 ])dnl
 dnl
@@ -1014,6 +1012,9 @@ AC_REQUIRE([AC_PROG_ARCHIVE])dnl
 AC_REQUIRE([AC_PROG_ARCHIVE_ADD])dnl
 AC_REQUIRE([AC_PROG_INSTALL])dnl
 AC_CHECK_PROG(AR, ar, ar, false)
+if test "$AR" = "false"; then
+  AC_MSG_ERROR([ar not found in PATH])
+fi
 AC_CHECK_PROG(PERL, perl, perl, false)
 if test "$ac_cv_prog_PERL" = "false"; then
   AC_MSG_ERROR(Perl is now required for Kerberos builds.)
@@ -1163,7 +1164,7 @@ else
 	esac
 	OBJLISTS="OBJS.SH"
 	PLUGIN='$(LIBBASE)$(DYNOBJEXT)'
-	PLUGINLINK=
+	PLUGINLINK='../$(PLUGIN)'
 	PLUGININST=install-plugin
 	KDB5_PLUGIN_DEPLIBS=
 	KDB5_PLUGIN_LIBS=
@@ -1629,6 +1630,7 @@ fi])
 dnl
 dnl
 m4_include(config/ac-archive/acx_pthread.m4)
+m4_include(config/ac-archive/relpaths.m4)
 dnl
 dnl
 dnl
@@ -1640,15 +1642,8 @@ AC_ARG_WITH([ldap],
 [case "$withval" in
     OPENLDAP) with_ldap=yes ;;
     yes | no) ;;
-    EDIRECTORY) AC_MSG_ERROR(Option --with-ldap=EDIRECTORY is deprecated; use --with-edirectory instead.) ;;
     *)  AC_MSG_ERROR(Invalid option value --with-ldap="$withval") ;;
 esac], with_ldap=no)dnl
-AC_ARG_WITH([edirectory],
-[  --with-edirectory       compile eDirectory database backend module],
-[case "$withval" in
-    yes | no) ;;
-    *)  AC_MSG_ERROR(Invalid option value --with-edirectory="$withval") ;;
-esac], with_edirectory=no)dnl
 
 if test $with_ldap = yes; then
   if test $with_edirectory = yes; then
@@ -1656,13 +1651,6 @@ if test $with_ldap = yes; then
   fi
   AC_MSG_NOTICE(enabling OpenLDAP database backend module support)
   OPENLDAP_PLUGIN=yes
-elif test $with_edirectory = yes; then
-  AC_MSG_NOTICE(enabling eDirectory database backend module support)
-  OPENLDAP_PLUGIN=yes
-  AC_DEFINE(HAVE_EDIRECTORY,1,[Define if LDAP KDB interface should assume eDirectory.])
-else
-  : # neither enabled
-dnl  AC_MSG_NOTICE(disabling ldap backend module support)
 fi
 ])dnl
 dnl

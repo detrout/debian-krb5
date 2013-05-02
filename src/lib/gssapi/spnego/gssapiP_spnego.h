@@ -117,7 +117,8 @@ typedef struct {
 extern const gss_OID_desc * const gss_mech_spnego;
 extern const gss_OID_set_desc * const gss_mech_set_spnego;
 
-#ifdef DEBUG
+#if defined(DEBUG) && defined(HAVE_SYSLOG_H)
+#include <syslog.h>
 #define	dsyslog(a) syslog(LOG_DEBUG, a)
 #else
 #define	dsyslog(a)
@@ -598,6 +599,34 @@ spnego_gss_inquire_attrs_for_mech
 	gss_const_OID mech,
 	gss_OID_set *mech_attrs,
 	gss_OID_set *known_mech_attrs
+);
+
+OM_uint32 KRB5_CALLCONV
+spnego_gss_acquire_cred_from
+(
+	OM_uint32 *minor_status,
+	const gss_name_t desired_name,
+	OM_uint32 time_req,
+	const gss_OID_set desired_mechs,
+	gss_cred_usage_t cred_usage,
+	gss_const_key_value_set_t cred_store,
+	gss_cred_id_t *output_cred_handle,
+	gss_OID_set *actual_mechs,
+	OM_uint32 *time_rec
+);
+
+OM_uint32 KRB5_CALLCONV
+spnego_gss_export_cred(
+	OM_uint32 *minor_status,
+	gss_cred_id_t cred_handle,
+	gss_buffer_t token
+);
+
+OM_uint32 KRB5_CALLCONV
+spnego_gss_import_cred(
+	OM_uint32 *minor_status,
+	gss_buffer_t token,
+	gss_cred_id_t *cred_handle
 );
 
 #ifdef	__cplusplus

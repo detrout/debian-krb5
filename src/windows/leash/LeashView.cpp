@@ -37,12 +37,13 @@
 static CHAR THIS_FILE[] = __FILE__;
 #endif
 
+#pragma comment(lib, "uxtheme")
 /////////////////////////////////////////////////////////////////////////////
 // CLeashView
 
-IMPLEMENT_DYNCREATE(CLeashView, CFormView)
+IMPLEMENT_DYNCREATE(CLeashView, CListView)
 
-BEGIN_MESSAGE_MAP(CLeashView, CFormView)
+BEGIN_MESSAGE_MAP(CLeashView, CListView)
 	//{{AFX_MSG_MAP(CLeashView)
     ON_MESSAGE(WM_WARNINGPOPUP, OnWarningPopup)
 	ON_MESSAGE(WM_GOODBYE, OnGoodbye)
@@ -55,12 +56,25 @@ BEGIN_MESSAGE_MAP(CLeashView, CFormView)
     ON_COMMAND(ID_IMPORT_TICKET, OnImportTicket)
 	ON_COMMAND(ID_DESTROY_TICKET, OnDestroyTicket)
 	ON_COMMAND(ID_CHANGE_PASSWORD, OnChangePassword)
+	ON_COMMAND(ID_MAKE_DEFAULT, OnMakeDefault)
 	ON_COMMAND(ID_UPDATE_DISPLAY, OnUpdateDisplay)
 	ON_COMMAND(ID_SYN_TIME, OnSynTime)
 	ON_COMMAND(ID_DEBUG_MODE, OnDebugMode)
 	ON_COMMAND(ID_LARGE_ICONS, OnLargeIcons)
+	ON_COMMAND(ID_TIME_ISSUED, OnTimeIssued)
+	ON_COMMAND(ID_VALID_UNTIL, OnValidUntil)
+	ON_COMMAND(ID_RENEWABLE_UNTIL, OnRenewableUntil)
+	ON_COMMAND(ID_SHOW_TICKET_FLAGS, OnShowTicketFlags)
+	ON_COMMAND(ID_ENCRYPTION_TYPE, OnEncryptionType)
+	ON_UPDATE_COMMAND_UI(ID_TIME_ISSUED, OnUpdateTimeIssued)
+	ON_UPDATE_COMMAND_UI(ID_VALID_UNTIL, OnUpdateValidUntil)
+	ON_UPDATE_COMMAND_UI(ID_RENEWABLE_UNTIL, OnUpdateRenewableUntil)
+	ON_UPDATE_COMMAND_UI(ID_SHOW_TICKET_FLAGS, OnUpdateShowTicketFlags)
+	ON_UPDATE_COMMAND_UI(ID_ENCRYPTION_TYPE, OnUpdateEncryptionType)
 	ON_COMMAND(ID_UPPERCASE_REALM, OnUppercaseRealm)
 	ON_COMMAND(ID_KILL_TIX_ONEXIT, OnKillTixOnExit)
+	ON_UPDATE_COMMAND_UI(ID_UPPERCASE_REALM, OnUpdateUppercaseRealm)
+	ON_UPDATE_COMMAND_UI(ID_KILL_TIX_ONEXIT, OnUpdateKillTixOnExit)
 	ON_WM_DESTROY()
 	ON_UPDATE_COMMAND_UI(ID_DESTROY_TICKET, OnUpdateDestroyTicket)
     ON_UPDATE_COMMAND_UI(ID_IMPORT_TICKET, OnUpdateImportTicket)
@@ -77,9 +91,12 @@ BEGIN_MESSAGE_MAP(CLeashView, CFormView)
     ON_COMMAND(ID_LEASH_MINIMIZE, OnLeashMinimize)
 	ON_COMMAND(ID_LOW_TICKET_ALARM, OnLowTicketAlarm)
 	ON_COMMAND(ID_AUTO_RENEW, OnAutoRenew)
+	ON_UPDATE_COMMAND_UI(ID_LOW_TICKET_ALARM, OnUpdateLowTicketAlarm)
+	ON_UPDATE_COMMAND_UI(ID_AUTO_RENEW, OnUpdateAutoRenew)
 	ON_UPDATE_COMMAND_UI(ID_KRB4_PROPERTIES, OnUpdateKrb4Properties)
 	ON_UPDATE_COMMAND_UI(ID_KRB5_PROPERTIES, OnUpdateKrb5Properties)
 	ON_UPDATE_COMMAND_UI(ID_AFS_CONTROL_PANEL, OnUpdateAfsControlPanel)
+	ON_UPDATE_COMMAND_UI(ID_MAKE_DEFAULT, OnUpdateMakeDefault)
 	ON_COMMAND(ID_PROPERTIES, OnKrbProperties)
 	ON_UPDATE_COMMAND_UI(ID_PROPERTIES, OnUpdateProperties)
 	ON_COMMAND(ID_HELP_KERBEROS_, OnHelpKerberos)
@@ -92,8 +109,13 @@ BEGIN_MESSAGE_MAP(CLeashView, CFormView)
 	ON_WM_VSCROLL()
     ON_WM_SYSCOLORCHANGE()
     ON_MESSAGE(ID_OBTAIN_TGT_WITH_LPARAM, OnObtainTGTWithParam)
+    ON_NOTIFY(HDN_ITEMCHANGED, 0, OnItemChanged)
 	//}}AFX_MSG_MAP
 
+    ON_NOTIFY_REFLECT(LVN_ITEMCHANGING, &CLeashView::OnLvnItemchanging)
+    ON_NOTIFY_REFLECT(LVN_ITEMACTIVATE, &CLeashView::OnLvnItemActivate)
+    ON_NOTIFY_REFLECT(LVN_KEYDOWN, &CLeashView::OnLvnKeydown)
+    ON_NOTIFY_REFLECT(NM_CUSTOMDRAW, &CLeashView::OnNMCustomdraw)
 END_MESSAGE_MAP()
 
 
@@ -119,23 +141,210 @@ BOOL CLeashView::m_lowTicketAlarmSound;
 INT  CLeashView::m_autoRenewalAttempted = 0;
 BOOL CLeashView::m_importedTickets = 0;
 LONG CLeashView::m_timerMsgNotInProgress = 1;
+ViewColumnInfo CLeashView::sm_viewColumns[] =
+{
+    {"Principal", true, -1, 100},                        // PRINCIPAL
+    {"Issued", false, ID_TIME_ISSUED, 100},              // TIME_ISSUED
+    {"Renewable Until", false, ID_RENEWABLE_UNTIL, 100}, // RENEWABLE_UNTIL
+    {"Valid Until", true, ID_VALID_UNTIL, 100},          // VALID_UNTIL
+    {"Encryption Type", false, ID_ENCRYPTION_TYPE, 100}, // ENCRYPTION_TYPE
+    {"Flags", false, ID_SHOW_TICKET_FLAGS, 100},         // TICKET_FLAGS
+};
+
+static struct TicketFlag {
+    unsigned long m_flag;
+    const LPTSTR m_description;
+} sm_TicketFlags[] =
+{
+    {TKT_FLG_FORWARDABLE, _T("Forwardable")},
+    {TKT_FLG_FORWARDED, _T("Forwarded")},
+    {TKT_FLG_PROXIABLE, _T("Proxiable")},
+    {TKT_FLG_PROXY, _T("Proxy")},
+    {TKT_FLG_RENEWABLE, _T("Renewable")},
+};
+
+static void krb5TicketFlagsToString(unsigned long flags, LPTSTR *outStr)
+{
+    const int numFlags = sizeof(sm_TicketFlags) / sizeof(sm_TicketFlags[0]);
+    int strSize = 1;
+    LPTSTR str;
+    // pass 1: compute size
+    for (int i = 0; i < numFlags; i++) {
+        if (flags & sm_TicketFlags[i].m_flag) {
+            if (strSize > 1)
+                strSize += 2;
+            strSize += strlen(sm_TicketFlags[i].m_description);
+        }
+    }
+    // allocate
+    str = (LPSTR)malloc(strSize);
+    if (str != NULL) {
+        *str = 0;
+        // pass 2: construct string
+        for (int i = 0; i < numFlags; i++) {
+            if (flags & sm_TicketFlags[i].m_flag) {
+                if (str[0])
+                    _tcscat_s(str, strSize, _T(", "));
+                _tcscat_s(str, strSize, sm_TicketFlags[i].m_description);
+            }
+        }
+    }
+    *outStr = str;
+}
+
+
+static HFONT CreateBoldFont(HFONT font)
+{
+    // @TODO: Should probably enumerate fonts here instead since this
+    // does not actually seem to guarantee returning a new font
+    // distinguishable from the original.
+    LOGFONT fontAttributes = { 0 };
+    ::GetObject(font, sizeof(fontAttributes), &fontAttributes);
+    fontAttributes.lfWeight = FW_BOLD;
+    HFONT boldFont = ::CreateFontIndirect(&fontAttributes);
+    return boldFont;
+}
+
+static HFONT CreateItalicFont(HFONT font)
+{
+    LOGFONT fontAttributes = { 0 };
+    ::GetObject(font, sizeof(fontAttributes), &fontAttributes);
+    fontAttributes.lfItalic = TRUE;
+    HFONT italicFont = ::CreateFontIndirect(&fontAttributes);
+    return italicFont;
+}
+
+static HFONT CreateBoldItalicFont(HFONT font)
+{
+    LOGFONT fontAttributes = { 0 };
+    ::GetObject(font, sizeof(fontAttributes), &fontAttributes);
+    fontAttributes.lfWeight = FW_BOLD;
+    fontAttributes.lfItalic = TRUE;
+    HFONT boldItalicFont = ::CreateFontIndirect(&fontAttributes);
+    return boldItalicFont;
+}
 
 bool change_icon_size = true;
-#ifndef KRB5_TC_NOTICKET
-extern HANDLE m_tgsReqMutex;
-#endif
+
+void krb5TimestampToFileTime(krb5_timestamp t, LPFILETIME pft)
+{
+    // Note that LONGLONG is a 64-bit value
+    LONGLONG ll;
+
+    ll = Int32x32To64(t, 10000000) + 116444736000000000;
+    pft->dwLowDateTime = (DWORD)ll;
+    pft->dwHighDateTime = ll >> 32;
+}
+
+// allocate outstr
+void krb5TimestampToLocalizedString(krb5_timestamp t, LPTSTR *outStr)
+{
+    FILETIME ft, lft;
+    SYSTEMTIME st;
+    krb5TimestampToFileTime(t, &ft);
+    FileTimeToLocalFileTime(&ft, &lft);
+    FileTimeToSystemTime(&lft, &st);
+    TCHAR timeFormat[80]; // 80 is max required for LOCALE_STIMEFORMAT
+    GetLocaleInfo(LOCALE_SYSTEM_DEFAULT,
+                  LOCALE_STIMEFORMAT,
+                  timeFormat,
+                  sizeof(timeFormat) / sizeof(timeFormat[0]));
+
+    int timeSize = GetTimeFormat(LOCALE_SYSTEM_DEFAULT,
+                                 TIME_NOSECONDS,
+                                 &st,
+                                 timeFormat,
+                                 NULL,
+                                 0);
+    // Using dateFormat prevents localization of Month/day order,
+    // but there is no other way AFAICT to suppress the year
+    TCHAR * dateFormat = "MMM dd'  '";
+    int dateSize = GetDateFormat(LOCALE_SYSTEM_DEFAULT,
+        0, // flags
+        &st,
+        dateFormat, // format
+        NULL, // date string
+        0);
+
+    if (*outStr)
+        free(*outStr);
+
+    // Allocate string for combined date and time,
+    // but only need one terminating NULL
+    LPTSTR str = (LPSTR)malloc((dateSize + timeSize - 1) * sizeof(TCHAR));
+    if (!str) {
+        // LeashWarn allocation failure
+        *outStr = NULL;
+        return;
+    }
+    GetDateFormat(LOCALE_SYSTEM_DEFAULT,
+        0, // flags
+        &st,
+        dateFormat, // format
+        &str[0],
+        dateSize);
+
+    GetTimeFormat(LOCALE_SYSTEM_DEFAULT,
+                    TIME_NOSECONDS,
+                    &st,
+                    timeFormat,
+                    &str[dateSize - 1],
+                    timeSize);
+    *outStr = str;
+}
+
+#define SECONDS_PER_MINUTE (60)
+#define SECONDS_PER_HOUR (60 * SECONDS_PER_MINUTE)
+#define SECONDS_PER_DAY (24 * SECONDS_PER_HOUR)
+#define MAX_DURATION_STR 255
+// convert time in seconds to string
+void DurationToString(long delta, LPTSTR *outStr)
+{
+    int days;
+    int hours;
+    int minutes;
+    TCHAR minutesStr[MAX_DURATION_STR+1];
+    TCHAR hoursStr[MAX_DURATION_STR+1];
+
+    if (*outStr)
+        free(*outStr);
+    *outStr = (LPSTR)malloc((MAX_DURATION_STR + 1)* sizeof(TCHAR));
+    if (!(*outStr))
+        return;
+
+    days = delta / SECONDS_PER_DAY;
+    delta -= days * SECONDS_PER_DAY;
+    hours = delta / SECONDS_PER_HOUR;
+    delta -= hours * SECONDS_PER_HOUR;
+    minutes = delta / SECONDS_PER_MINUTE;
+
+    _snprintf(minutesStr, MAX_DURATION_STR, "%d m", minutes);
+    minutesStr[MAX_DURATION_STR] = 0;
+
+    _snprintf(hoursStr, MAX_DURATION_STR, "%d h", hours);
+    hoursStr[MAX_DURATION_STR] = 0;
+
+    if (days > 0) {
+        _snprintf(*outStr, MAX_DURATION_STR, "(%d d, %s remaining)", days,
+                  hoursStr);
+    } else if (hours > 0) {
+        _snprintf(*outStr, MAX_DURATION_STR, "(%s, %s remaining)", hoursStr,
+                  minutesStr);
+    } else {
+        _snprintf(*outStr, MAX_DURATION_STR, "(%s remaining)", minutesStr);
+    }
+    (*outStr)[MAX_DURATION_STR] = 0;
+}
 
 /////////////////////////////////////////////////////////////////////////////
 // CLeashView construction/destruction
 
-CLeashView::CLeashView():
-CFormView(CLeashView::IDD)
+CLeashView::CLeashView()
 {
 ////@#+Need removing as well!
 #ifndef NO_KRB4
     m_listKrb4 = NULL;
 #endif
-    m_listKrb5 = NULL;
     m_listAfs = NULL;
     m_startup = TRUE;
     m_warningOfTicketTimeLeftKrb4 = 0;
@@ -162,10 +371,9 @@ CFormView(CLeashView::IDD)
     m_lowTicketAlarmSound = FALSE;
     m_alreadyPlayed = FALSE;
     ResetTreeNodes();
-    m_pTree = NULL;
     m_hMenu = NULL;
     m_pApp = NULL;
-    m_pImageList = NULL;
+    m_ccacheDisplay = NULL;
     m_forwardableTicket = 0;
     m_proxiableTicket = 0;
     m_renewableTicket = 0;
@@ -176,20 +384,51 @@ CFormView(CLeashView::IDD)
     m_pWarningMessage = NULL;
     m_bIconAdded = FALSE;
     m_bIconDeleted = FALSE;
-#ifndef KRB5_TC_NOTICKET
-    m_tgsReqMutex = CreateMutex(NULL, FALSE, NULL);
-#endif
+    m_BaseFont = NULL;
+    m_BoldFont = NULL;
+    m_ItalicFont = NULL;
+    m_aListItemInfo = NULL;
 }
 
 
 CLeashView::~CLeashView()
 {
-#ifndef KRB5_TC_NOTICKET
-    CloseHandle(m_tgsReqMutex);
-#endif
+    CCacheDisplayData *elem = m_ccacheDisplay;
+    while (elem) {
+        CCacheDisplayData *next = elem->m_next;
+        delete elem;
+        elem = next;
+    }
+    m_ccacheDisplay = NULL;
     // destroys window if not already destroyed
     if (m_pDebugWindow)
         delete m_pDebugWindow;
+    if (m_BoldFont)
+        DeleteObject(m_BoldFont);
+    if (m_ItalicFont)
+        DeleteObject(m_ItalicFont);
+    if (m_aListItemInfo)
+        delete[] m_aListItemInfo;
+}
+
+void CLeashView::OnItemChanged(NMHDR* pNmHdr, LRESULT* pResult)
+{
+    NMHEADER* pHdr = (NMHEADER*)pNmHdr;
+    if (!pHdr->pitem)
+        return;
+    if (!pHdr->pitem->mask & HDI_WIDTH)
+        return;
+
+    // Sync column width and save to registry
+    for (int i = 0, columnIndex = 0; i < NUM_VIEW_COLUMNS; i++) {
+        ViewColumnInfo &info = sm_viewColumns[i];
+        if ((info.m_enabled) && (columnIndex++ == pHdr->iItem)) {
+            info.m_columnWidth = pHdr->pitem->cxy;
+            if (m_pApp)
+                m_pApp->WriteProfileInt("ColumnWidths", info.m_name, info.m_columnWidth);
+            break;
+        }
+    }
 }
 
 BOOL CLeashView::PreCreateWindow(CREATESTRUCT& cs)
@@ -197,7 +436,7 @@ BOOL CLeashView::PreCreateWindow(CREATESTRUCT& cs)
     // TODO: Modify the Window class or styles here by modifying
     //  the CREATESTRUCT cs
 
-    return CFormView::PreCreateWindow(cs);
+    return CListView::PreCreateWindow(cs);
 }
 
 /////////////////////////////////////////////////////////////////////////////
@@ -206,12 +445,12 @@ BOOL CLeashView::PreCreateWindow(CREATESTRUCT& cs)
 #ifdef _DEBUG
 VOID CLeashView::AssertValid() const
 {
-    CFormView::AssertValid();
+    CListView::AssertValid();
 }
 
 VOID CLeashView::Dump(CDumpContext& dc) const
 {
-    CFormView::Dump(dc);
+    CListView::Dump(dc);
 }
 
 /*
@@ -230,13 +469,13 @@ BOOL CLeashView::Create(LPCTSTR lpszClassName, LPCTSTR lpszWindowName,
                         DWORD dwStyle, const RECT& rect, CWnd* pParentWnd,
                         UINT nID, CCreateContext* pContext)
 {
-    return CFormView::Create(lpszClassName, lpszWindowName, dwStyle, rect,
+    return CListView::Create(lpszClassName, lpszWindowName, dwStyle, rect,
                              pParentWnd, nID, pContext);
 }
 
 INT CLeashView::OnCreate(LPCREATESTRUCT lpCreateStruct)
 {
-    if (CFormView::OnCreate(lpCreateStruct) == -1)
+    if (CListView::OnCreate(lpCreateStruct) == -1)
         return -1;
     return 0;
 }
@@ -255,8 +494,7 @@ time_t CLeashView::LeashTime()
 // Call while possessing a lock to ticketinfo.lockObj
 INT CLeashView::GetLowTicketStatus(int ver)
 {
-    BOOL b_notix = (ver == 4 && !ticketinfo.Krb4.btickets) ||
-                   (ver == 5 && !ticketinfo.Krb5.btickets) ||
+    BOOL b_notix = (ver == 5 && !ticketinfo.Krb5.btickets) ||
                    (ver == 1 && !ticketinfo.Afs.btickets);
 
     if (b_notix)
@@ -274,14 +512,12 @@ INT CLeashView::GetLowTicketStatus(int ver)
 
 VOID CLeashView::UpdateTicketTime(TICKETINFO& ti)
 {
-    if (!ti.btickets)
-    {
+    if (!ti.btickets) {
         m_ticketTimeLeft = 0L;
         return;
     }
 
-    m_ticketTimeLeft = ti.issue_date + ti.lifetime -
-        LeashTime();
+    m_ticketTimeLeft = ti.valid_until - LeashTime();
 
     if (m_ticketTimeLeft <= 0L)
         ti.btickets = EXPIRED_TICKETS;
@@ -303,7 +539,7 @@ VOID  CLeashView::ApplicationInfoMissingMsg()
 
 VOID CLeashView::OnShowWindow(BOOL bShow, UINT nStatus)
 {
-    CFormView::OnShowWindow(bShow, nStatus);
+    CListView::OnShowWindow(bShow, nStatus);
 
     // Get State of Icons Size
     m_pApp = AfxGetApp();
@@ -341,6 +577,17 @@ VOID CLeashView::OnShowWindow(BOOL bShow, UINT nStatus)
 
         // Public IP Address
         m_publicIPAddress = pLeash_get_default_publicip();
+
+        // UI main display column widths
+        for (int i=0; i<NUM_VIEW_COLUMNS; i++) {
+            ViewColumnInfo &info = sm_viewColumns[i];
+            info.m_enabled = m_pApp->GetProfileInt("Settings",
+                                                   info.m_name,
+                                                   info.m_enabled);
+            info.m_columnWidth = m_pApp->GetProfileInt("ColumnWidths",
+                                                   info.m_name,
+                                                   info.m_columnWidth);
+        }
 
         OnLargeIcons();
     }
@@ -389,10 +636,6 @@ VOID CLeashView::OnInitTicket()
 
 UINT CLeashView::InitTicket(void * hWnd)
 {
-#ifndef KRB5_TC_NOTICKET
-    if (WaitForSingleObject( m_tgsReqMutex, INFINITE ) != WAIT_OBJECT_0)
-        throw("Unable to lock TGS request mutex");
-#endif
     m_importedTickets = 0;
 
     LSH_DLGINFO_EX ldi;
@@ -400,33 +643,28 @@ UINT CLeashView::InitTicket(void * hWnd)
     char realm[192];
     int i=0, j=0;
     if (WaitForSingleObject( ticketinfo.lockObj, INFINITE ) != WAIT_OBJECT_0) {
-#ifndef KRB5_TC_NOTICKET
-        ReleaseMutex(m_tgsReqMutex);
-#endif
         throw("Unable to lock ticketinfo");
     }
-
+    LeashKRB5ListDefaultTickets(&ticketinfo.Krb5);
     char * principal = ticketinfo.Krb5.principal;
-    if (!*principal)
-        principal = ticketinfo.Krb4.principal;
-    for (; principal[i] && principal[i] != '@'; i++)
-    {
-        username[i] = principal[i];
-    }
+    if (principal)
+        for (; principal[i] && principal[i] != '@'; i++)
+            username[i] = principal[i];
     username[i] = '\0';
-    if (principal[i]) {
+    if (principal && principal[i]) {
         for (i++ ; principal[i] ; i++, j++)
         {
             realm[j] = principal[i];
         }
     }
     realm[j] = '\0';
+    LeashKRB5FreeTicketInfo(&ticketinfo.Krb5);
     ReleaseMutex(ticketinfo.lockObj);
 
     ldi.size = sizeof(ldi);
     ldi.dlgtype = DLGTYPE_PASSWD;
     ldi.title = ldi.in.title;
-    strcpy(ldi.in.title,"Initialize Ticket");
+    strcpy_s(ldi.in.title,"MIT Kerberos: Get Ticket");
     ldi.username = ldi.in.username;
     strcpy(ldi.in.username,username);
     ldi.realm = ldi.in.realm;
@@ -438,15 +676,9 @@ UINT CLeashView::InitTicket(void * hWnd)
     {
         AfxMessageBox("There is a problem finding the Leash Window!",
                    MB_OK|MB_ICONSTOP);
-#ifndef KRB5_TC_NOTICKET
-        ReleaseMutex(m_tgsReqMutex);
-#endif
         return 0;
     }
 
-#ifndef KRB5_TC_NOTICKET
-    ReleaseMutex(m_tgsReqMutex);
-#endif
     int result = pLeash_kinit_dlg_ex((HWND)hWnd, &ldi);
 
     if (-1 == result)
@@ -456,26 +688,15 @@ UINT CLeashView::InitTicket(void * hWnd)
     }
     else if ( result )
     {
-#ifndef KRB5_TC_NOTICKET
-        if (WaitForSingleObject( m_tgsReqMutex, INFINITE ) != WAIT_OBJECT_0)
-            throw("Unable to lock TGS request mutex");
-#endif
         if (WaitForSingleObject( ticketinfo.lockObj, INFINITE ) != WAIT_OBJECT_0) {
-#ifndef KRB5_TC_NOTICKET
-            ReleaseMutex(m_tgsReqMutex);
-#endif
             throw("Unable to lock ticketinfo");
         }
-        ticketinfo.Krb4.btickets = GOOD_TICKETS;
         m_warningOfTicketTimeLeftKrb4 = 0;
         m_warningOfTicketTimeLeftKrb5 = 0;
         m_ticketStatusKrb4 = 0;
         m_ticketStatusKrb5 = 0;
         ReleaseMutex(ticketinfo.lockObj);
         m_autoRenewalAttempted = 0;
-#ifndef KRB5_TC_NOTICKET
-        ReleaseMutex(m_tgsReqMutex);
-#endif
         ::SendMessage((HWND)hWnd, WM_COMMAND, ID_UPDATE_DISPLAY, 0);
     }
     return 0;
@@ -496,19 +717,10 @@ UINT CLeashView::ImportTicket(void * hWnd)
     if ( !CLeashApp::m_hKrb5DLL )
         return 0;
 
-#ifndef KRB5_TC_NOTICKET
-    if (WaitForSingleObject( m_tgsReqMutex, INFINITE ) != WAIT_OBJECT_0)
-        throw("Unable to lock TGS request mutex");
-#endif
-    int import = 0;
-    int warning = 0;
-
     krb5_error_code code;
     krb5_ccache mslsa_ccache=0;
     krb5_principal princ = 0;
     char * pname = 0;
-    LONG krb5Error = 0;
-    TicketList * tlist = NULL;
 
     if (code = pkrb5_cc_resolve(CLeashApp::m_krbv5_context, "MSLSA:", &mslsa_ccache))
         goto cleanup;
@@ -519,21 +731,7 @@ UINT CLeashView::ImportTicket(void * hWnd)
     if (code = pkrb5_unparse_name(CLeashApp::m_krbv5_context, princ, &pname))
         goto cleanup;
 
-    if (WaitForSingleObject( ticketinfo.lockObj, INFINITE ) != WAIT_OBJECT_0) {
-#ifndef KRB5_TC_NOTICKET
-        ReleaseMutex(m_tgsReqMutex);
-#endif
-        throw("Unable to lock ticketinfo");
-    }
-    krb5Error = pLeashKRB5GetTickets( &ticketinfo.Krb5, &tlist,
-                                      &CLeashApp::m_krbv5_context);
-    if ( tlist )
-        pLeashFreeTicketList(&tlist);
-
-    warning = strcmp(ticketinfo.Krb5.principal, pname) && ticketinfo.Krb5.btickets;
-    ReleaseMutex(ticketinfo.lockObj);
-
-  cleanup:
+cleanup:
     if (pname)
         pkrb5_free_unparsed_name(CLeashApp::m_krbv5_context, pname);
 
@@ -544,105 +742,132 @@ UINT CLeashView::ImportTicket(void * hWnd)
         pkrb5_cc_close(CLeashApp::m_krbv5_context, mslsa_ccache);
 
     if ( code == 0 ) {
-        if (warning)
+        int result = pLeash_import();
+        if (-1 == result)
         {
-            INT whatToDo;
-#ifndef KRB5_TC_NOTICKET
-            ReleaseMutex(m_tgsReqMutex);
-#endif
-            if (!CLeashApp::m_hAfsDLL
-////@#+Need to rework this logic. I am confused what !m_hKrb4DLL means in this case!
-#ifndef NO_KRB4
-		|| !CLeashApp::m_hKrb4DLL
-#endif
-		)
-                whatToDo = AfxMessageBox("You are about to replace your existing ticket(s)\n"
-                                          "with a ticket imported from the Windows credential cache!",
-                                          MB_OKCANCEL, 0);
-            else
-                whatToDo = AfxMessageBox("You are about to replace your existing ticket(s)/token(s)"
-                                          "with ticket imported from the Windows credential cache!",
-                                          MB_OKCANCEL, 0);
-#ifndef KRB5_TC_NOTICKET
-            if (WaitForSingleObject( m_tgsReqMutex, INFINITE ) != WAIT_OBJECT_0)
-                throw("Unable to lock tgsReqMutex");
-#endif
-            if (whatToDo == IDOK)
-            {
-                pLeash_kdestroy();
-                import = 1;
-            }
-        } else {
-            import = 1;
+            AfxMessageBox("There is a problem importing tickets!",
+                            MB_OK|MB_ICONSTOP);
+            ::SendMessage((HWND)hWnd,WM_COMMAND, ID_UPDATE_DISPLAY, 0);
+            m_importedTickets = 0;
         }
-
-        if ( import ) {
-            int result = pLeash_import();
-            if (-1 == result)
-            {
-#ifndef KRB5_TC_NOTICKET
-                ReleaseMutex(m_tgsReqMutex);
-#endif
-                AfxMessageBox("There is a problem importing tickets!",
-                               MB_OK|MB_ICONSTOP);
-                ::SendMessage((HWND)hWnd,WM_COMMAND, ID_UPDATE_DISPLAY, 0);
-                m_importedTickets = 0;
+        else
+        {
+            if (WaitForSingleObject( ticketinfo.lockObj, INFINITE ) != WAIT_OBJECT_0) {
+                throw("Unable to lock ticketinfo");
             }
-            else
-            {
-                if (WaitForSingleObject( ticketinfo.lockObj, INFINITE ) != WAIT_OBJECT_0) {
-#ifndef KRB5_TC_NOTICKET
-                    ReleaseMutex(m_tgsReqMutex);
-#endif
-                    throw("Unable to lock ticketinfo");
-                }
-                ticketinfo.Krb4.btickets = GOOD_TICKETS;
-                ticketinfo.Krb5.btickets = GOOD_TICKETS;
-                m_warningOfTicketTimeLeftKrb4 = 0;
-                m_warningOfTicketTimeLeftKrb5 = 0;
-                m_ticketStatusKrb4 = 0;
-                m_ticketStatusKrb5 = 0;
+            ticketinfo.Krb5.btickets = GOOD_TICKETS;
+            m_warningOfTicketTimeLeftKrb4 = 0;
+            m_warningOfTicketTimeLeftKrb5 = 0;
+            m_ticketStatusKrb4 = 0;
+            m_ticketStatusKrb5 = 0;
+            ReleaseMutex(ticketinfo.lockObj);
+            ::SendMessage((HWND)hWnd, WM_COMMAND, ID_UPDATE_DISPLAY, 0);
+
+            if (WaitForSingleObject( ticketinfo.lockObj, INFINITE ) != WAIT_OBJECT_0) {
+                throw("Unable to lock ticketinfo");
+            }
+
+            if (ticketinfo.Krb5.btickets != GOOD_TICKETS) {
                 ReleaseMutex(ticketinfo.lockObj);
-#ifndef KRB5_TC_NOTICKET
-                ReleaseMutex(m_tgsReqMutex);
-#endif
-                ::SendMessage((HWND)hWnd, WM_COMMAND, ID_UPDATE_DISPLAY, 0);
-
-#ifndef KRB5_TC_NOTICKET
-                if (WaitForSingleObject( m_tgsReqMutex, INFINITE ) != WAIT_OBJECT_0)
-                    throw("Unable to lock tgsReqMutex");
-#endif
-                if (WaitForSingleObject( ticketinfo.lockObj, INFINITE ) != WAIT_OBJECT_0) {
-#ifndef KRB5_TC_NOTICKET
-                    ReleaseMutex(m_tgsReqMutex);
-#endif
-                    throw("Unable to lock ticketinfo");
-                }
-#ifndef KRB5_TC_NOTICKET
-                ReleaseMutex(m_tgsReqMutex);
-#endif
-
-                if (ticketinfo.Krb5.btickets != GOOD_TICKETS) {
-                    ReleaseMutex(ticketinfo.lockObj);
-                    AfxBeginThread(InitTicket,hWnd);
-                } else {
-                    ReleaseMutex(ticketinfo.lockObj);
-                    m_importedTickets = 1;
-                    m_autoRenewalAttempted = 0;
-                }
+                AfxBeginThread(InitTicket,hWnd);
+            } else {
+                ReleaseMutex(ticketinfo.lockObj);
+                m_importedTickets = 1;
+                m_autoRenewalAttempted = 0;
             }
         }
-#ifndef KRB5_TC_NOTICKET
-        else {
-            ReleaseMutex(m_tgsReqMutex);
-        }
-#endif
     }
-#ifndef KRB5_TC_NOTICKET
-    else {
-        ReleaseMutex(m_tgsReqMutex);
+    return 0;
+}
+
+static UINT krenew(void *param)
+{
+    char *ccache_name = (char *)param;
+    krb5_context ctx = 0;
+    krb5_ccache ccache = NULL;
+    krb5_principal me = 0;
+    krb5_principal server = 0;
+    krb5_creds my_creds;
+    krb5_data *realm = 0;
+
+    // @TODO: logic to check for imported tickets and auto-renew/re-import
+    // from MSLSA
+
+    memset(&my_creds, 0, sizeof(krb5_creds));
+    if (ccache_name == NULL)
+        // Bad param
+        goto cleanup;
+
+    krb5_error_code code = pkrb5_init_context(&ctx);
+    if (code) {
+        // TODO: spew error
+        goto cleanup;
     }
+    code = pkrb5_cc_resolve(ctx, ccache_name, &ccache);
+    if (code) {
+        // TODO: spew error
+        goto cleanup;
+    }
+
+    code = pkrb5_cc_get_principal(ctx, ccache, &me);
+    if (code)
+        goto cleanup;
+
+    realm = krb5_princ_realm(ctx, me);
+
+    code = pkrb5_build_principal_ext(ctx, &server,
+                                    realm->length, realm->data,
+                                    KRB5_TGS_NAME_SIZE, KRB5_TGS_NAME,
+                                    realm->length, realm->data,
+                                    0);
+    if (code)
+        goto cleanup;
+
+    my_creds.client = me;
+    my_creds.server = server;
+
+#ifdef KRB5_TC_NOTICKET
+    pkrb5_cc_set_flags(ctx, ccache, 0);
 #endif
+    code = pkrb5_get_renewed_creds(ctx, &my_creds, me, ccache, NULL);
+#ifdef KRB5_TC_NOTICKET
+    pkrb5_cc_set_flags(ctx, ccache, KRB5_TC_NOTICKET);
+#endif
+    if (code) {
+/* TODO
+        if (code != KRB5KDC_ERR_ETYPE_NOSUPP || code != KRB5_KDC_UNREACH)
+            Leash_krb5_error(code, "krb5_get_renewed_creds()", 0, &ctx,
+                             &ccache);
+*/
+        goto cleanup;
+    }
+
+    code = pkrb5_cc_initialize(ctx, ccache, me);
+    if (code)
+        goto cleanup;
+
+    code = pkrb5_cc_store_cred(ctx, ccache, &my_creds);
+    if (code)
+        goto cleanup;
+
+cleanup:
+    if (my_creds.client == me)
+        my_creds.client = 0;
+    if (my_creds.server == server)
+        my_creds.server = 0;
+    pkrb5_free_cred_contents(ctx, &my_creds);
+    if (me != NULL)
+        pkrb5_free_principal(ctx, me);
+    if (server != NULL)
+        pkrb5_free_principal(ctx, server);
+    if (ccache != NULL)
+        pkrb5_cc_close(ctx, ccache);
+    if (ctx != NULL)
+        pkrb5_free_context(ctx);
+    if (ccache_name != NULL)
+        free(ccache_name);
+
+    CLeashApp::m_bUpdateDisplay = TRUE;
     return 0;
 }
 
@@ -651,12 +876,17 @@ VOID CLeashView::OnRenewTicket()
     if ( !CLeashApp::m_hKrb5DLL )
         return;
 
-    try {
-        RenewTicket(m_hWnd);
+    // @TODO: grab list mutex
+    CCacheDisplayData *elem = m_ccacheDisplay;
+    while (elem != NULL) {
+        if (elem->m_selected) {
+            char *ccache_name = strdup(elem->m_ccacheName);
+            if (ccache_name)
+                AfxBeginThread(krenew, (void *)ccache_name);
+        }
+        elem = elem->m_next;
     }
-    catch(...) {
-        AfxMessageBox("Ticket Getting operation already in progress", MB_OK|MB_ICONWARNING, 0);
-    }
+    // release list mutex
 }
 
 UINT CLeashView::RenewTicket(void * hWnd)
@@ -664,38 +894,17 @@ UINT CLeashView::RenewTicket(void * hWnd)
     if ( !CLeashApp::m_hKrb5DLL )
         return 0;
 
-#ifndef KRB5_TC_NOTICKET
-    if (WaitForSingleObject( m_tgsReqMutex, INFINITE ) != WAIT_OBJECT_0)
-        throw("Unable to lock TGS request mutex");
-#endif
-
     // Try to renew
     BOOL b_renewed = pLeash_renew();
-    TicketList * tlist = NULL;
-    if (WaitForSingleObject( ticketinfo.lockObj, INFINITE ) != WAIT_OBJECT_0) {
-#ifndef KRB5_TC_NOTICKET
-        ReleaseMutex(m_tgsReqMutex);
-#endif
-        throw("Unable to lock ticketinfo");
-    }
-    LONG krb5Error = pLeashKRB5GetTickets(&ticketinfo.Krb5, &tlist,
-                                           &CLeashApp::m_krbv5_context);
-    pLeashFreeTicketList(&tlist);
     if ( b_renewed ) {
-        if (!krb5Error && ticketinfo.Krb5.btickets == GOOD_TICKETS) {
-            ticketinfo.Krb4.btickets = GOOD_TICKETS;
-            m_warningOfTicketTimeLeftKrb4 = 0;
-            m_warningOfTicketTimeLeftKrb5 = 0;
-            m_ticketStatusKrb4 = 0;
-            m_ticketStatusKrb5 = 0;
-            m_autoRenewalAttempted = 0;
-            ReleaseMutex(ticketinfo.lockObj);
-#ifndef KRB5_TC_NOTICKET
-            ReleaseMutex(m_tgsReqMutex);
-#endif
-            ::SendMessage((HWND)hWnd, WM_COMMAND, ID_UPDATE_DISPLAY, 0);
-            return 0;
-        }
+        m_warningOfTicketTimeLeftKrb4 = 0;
+        m_warningOfTicketTimeLeftKrb5 = 0;
+        m_ticketStatusKrb4 = 0;
+        m_ticketStatusKrb5 = 0;
+        m_autoRenewalAttempted = 0;
+        ReleaseMutex(ticketinfo.lockObj);
+        ::SendMessage((HWND)hWnd, WM_COMMAND, ID_UPDATE_DISPLAY, 0);
+        return 0;
     }
 
     krb5_error_code code;
@@ -716,8 +925,6 @@ UINT CLeashView::RenewTicket(void * hWnd)
         m_importedTickets = 1;
 
   cleanup:
-    ReleaseMutex(ticketinfo.lockObj);
-
     if (pname)
         pkrb5_free_unparsed_name(CLeashApp::m_krbv5_context, pname);
 
@@ -727,9 +934,6 @@ UINT CLeashView::RenewTicket(void * hWnd)
     if (mslsa_ccache)
         pkrb5_cc_close(CLeashApp::m_krbv5_context, mslsa_ccache);
 
-#ifndef KRB5_TC_NOTICKET
-    ReleaseMutex(m_tgsReqMutex);
-#endif
     // If imported from Kerberos LSA, re-import
     // Otherwise, init the tickets
     if ( m_importedTickets )
@@ -740,28 +944,61 @@ UINT CLeashView::RenewTicket(void * hWnd)
     return 0;
 }
 
+static void kdestroy(const char *ccache_name)
+{
+    krb5_context ctx;
+    krb5_ccache ccache=NULL;
+    int code = pkrb5_init_context(&ctx);
+    if (code) {
+        // TODO: spew error
+        goto cleanup;
+    }
+    code = pkrb5_cc_resolve(ctx, ccache_name, &ccache);
+    if (code) {
+        // TODO: spew error
+        goto cleanup;
+    }
+    code = pkrb5_cc_destroy(ctx, ccache);
+    if (code) {
+        goto cleanup;
+    }
+cleanup:
+    if (ctx)
+        pkrb5_free_context(ctx);
+}
+
+
 VOID CLeashView::OnDestroyTicket()
 {
-    if (WaitForSingleObject( ticketinfo.lockObj, INFINITE ) != WAIT_OBJECT_0)
-        throw("Unable to lock ticketinfo");
-    BOOL b_destroy =ticketinfo.Krb4.btickets || ticketinfo.Krb5.btickets || ticketinfo.Afs.btickets;
-    ReleaseMutex(ticketinfo.lockObj);
+    // @TODO: grab mutex
+    BOOL destroy = FALSE;
+    CCacheDisplayData *elem = m_ccacheDisplay;
+    while (elem) {
+        if (elem->m_selected) {
+            // @TODO add princ to msg text
+            destroy = TRUE;
+        }
+        elem = elem->m_next;
+    }
+    // release mutex
 
-    if (b_destroy)
+    if (destroy)
     {
         INT whatToDo;
 
-        if (!CLeashApp::m_hAfsDLL)
-            whatToDo = AfxMessageBox("You are about to destroy your ticket(s)!",
-                                     MB_OKCANCEL, 0);
-        else
-            whatToDo = AfxMessageBox("You are about to destroy your ticket(s)/token(s)!",
-                                     MB_OKCANCEL, 0);
+        whatToDo = AfxMessageBox("Are you sure you want to destroy these tickets?",
+                                    MB_ICONEXCLAMATION|MB_YESNO, 0);
 
-        if (whatToDo == IDOK)
+        if (whatToDo == IDYES)
         {
-            pLeash_kdestroy();
-            ResetTreeNodes();
+            // grab list mutex
+            elem = m_ccacheDisplay;
+            while (elem) {
+                if (elem->m_selected)
+                    kdestroy(elem->m_ccacheName);
+                elem = elem->m_next;
+            }
+            // release list mutex
             SendMessage(WM_COMMAND, ID_UPDATE_DISPLAY, 0);
         }
     }
@@ -769,80 +1006,267 @@ VOID CLeashView::OnDestroyTicket()
     m_autoRenewalAttempted = 0;
 }
 
+VOID CLeashView::OnMakeDefault()
+{
+    CCacheDisplayData *elem = m_ccacheDisplay;
+    int code = 0;
+    krb5_context ctx;
+    krb5_ccache cc;
+    while (elem) {
+        if (elem->m_selected) {
+            pkrb5_init_context(&ctx);
+            code = pkrb5_cc_resolve(ctx, elem->m_ccacheName, &cc);
+            if (!code)
+                code = pkrb5_cc_switch(ctx, cc);
+            if (!code) {
+                const char *cctype = pkrb5_cc_get_type(ctx, cc);
+                if (cctype != NULL) {
+                    char defname[20];
+                    sprintf_s(defname, "%s:", cctype);
+                    code = pkrb5int_cc_user_set_default_name(ctx, defname);
+                }
+            }
+            pkrb5_free_context(ctx);
+            CLeashApp::m_bUpdateDisplay = TRUE;
+            break;
+        }
+        elem = elem->m_next;
+    }
+}
+
 VOID CLeashView::OnChangePassword()
 {
-    if (!m_hWnd)
-    {
-        AfxMessageBox("There is a problem finding the Leash Window!",
-                   MB_OK|MB_ICONSTOP);
-        return;
-    }
+    krb5_context ctx = 0;
+    krb5_ccache ccache = 0;
+    krb5_principal princ = 0;
+    char *pname = NULL;
+    char *username = NULL;
+    char *realm = NULL;
+    int code = 0;
 
-    if (WaitForSingleObject( ticketinfo.lockObj, INFINITE ) != WAIT_OBJECT_0)
-        throw("Unable to lock ticketinfo");
+    CCacheDisplayData *elem = m_ccacheDisplay;
+    while (elem != NULL) {
+        if (elem->m_selected) {
+            if (elem->m_ccacheName)
+                break;
+        }
+        elem = elem->m_next;
+    }
+    if (elem != NULL) {
+        code = pkrb5_init_context(&ctx);
+        if (code) {
+            // TODO: spew error
+            goto cleanup;
+        }
+        code = pkrb5_cc_resolve(ctx, elem->m_ccacheName, &ccache);
+        if (code) {
+            // TODO: spew error
+            goto cleanup;
+        }
+        code = pkrb5_cc_get_principal(ctx, ccache, &princ);
+        if (code) {
+            goto cleanup;
+        }
+        code = pkrb5_unparse_name(ctx, princ, &pname);
+        if (code) {
+            goto cleanup;
+        }
+    }
 
     LSH_DLGINFO_EX ldi;
-    char username[64];
-    char realm[192];
-    char * principal = ticketinfo.Krb5.principal;
-    if (!*principal)
-	principal = ticketinfo.Krb4.principal;
-    int i=0, j=0;
-    for (; principal[i] && principal[i] != '@'; i++)
-    {
-	username[i] = principal[i];
+    if (pname != NULL) {
+        username = pname;
+        realm = strchr(pname, '@');
+        if (realm != NULL)
+            *realm++ = '\0';
     }
-    username[i] = '\0';
-    if (principal[i]) {
-	for (i++ ; principal[i] ; i++, j++)
-	{
-	    realm[j] = principal[i];
-	}
-    }
-    realm[j] = '\0';
-    ReleaseMutex(ticketinfo.lockObj);
-
     ldi.size = sizeof(ldi);
     ldi.dlgtype = DLGTYPE_CHPASSWD;
     ldi.title = ldi.in.title;
-    strcpy(ldi.in.title,"Change Password");
+    strcpy_s(ldi.in.title, "MIT Kerberos: Change Password");
     ldi.username = ldi.in.username;
-    strcpy(ldi.in.username,username);
+    strcpy_s(ldi.in.username, username ? username : "");
     ldi.realm = ldi.in.realm;
-    strcpy(ldi.in.realm,realm);
+    strcpy_s(ldi.in.realm, realm ? realm : "");
     ldi.use_defaults = 1;
 
     int result = pLeash_changepwd_dlg_ex(m_hWnd, &ldi);
-    if (-1 == result)
-    {
+    if (-1 == result) {
         AfxMessageBox("There is a problem changing password!",
                    MB_OK|MB_ICONSTOP);
     }
+cleanup:
+    if (pname != NULL)
+        pkrb5_free_unparsed_name(ctx, pname);
+    if (princ != NULL)
+        pkrb5_free_principal(ctx, princ);
+    if (ccache != NULL)
+        pkrb5_cc_close(ctx, ccache);
+    if (ctx != NULL)
+        pkrb5_free_context(ctx);
+}
+
+static CCacheDisplayData **
+FindCCacheDisplayData(const char * ccacheName, CCacheDisplayData **pList)
+{
+    CCacheDisplayData *elem;
+    while ((elem = *pList)) {
+        if (strcmp(ccacheName, elem->m_ccacheName)==0)
+            return pList;
+        pList = &elem->m_next;
+    }
+    return NULL;
+}
+
+void CLeashView::AddDisplayItem(CListCtrl &list,
+                                CCacheDisplayData *elem,
+                                int iItem,
+                                char *principal,
+                                long issued,
+                                long valid_until,
+                                long renew_until,
+                                char *encTypes,
+                                unsigned long flags)
+{
+    TCHAR* localTimeStr=NULL;
+    TCHAR* durationStr=NULL;
+    TCHAR* flagsStr=NULL;
+    TCHAR tempStr[MAX_DURATION_STR+1];
+    time_t now = LeashTime();
+
+    list.InsertItem(iItem, principal, -1);
+
+    int iSubItem = 1;
+    if (sm_viewColumns[TIME_ISSUED].m_enabled) {
+        if (issued == 0) {
+            list.SetItemText(iItem, iSubItem++, "Unknown");
+        } else {
+            krb5TimestampToLocalizedString(issued, &localTimeStr);
+            list.SetItemText(iItem, iSubItem++, localTimeStr);
+        }
+    }
+    if (sm_viewColumns[RENEWABLE_UNTIL].m_enabled) {
+        if (valid_until == 0) {
+            list.SetItemText(iItem, iSubItem++, "Unknown");
+        } else if (valid_until < now) {
+            list.SetItemText(iItem, iSubItem++, "Expired");
+        } else if (renew_until) {
+            krb5TimestampToLocalizedString(renew_until, &localTimeStr);
+            DurationToString(renew_until - now, &durationStr);
+            if (localTimeStr && durationStr) {
+                _snprintf(tempStr, MAX_DURATION_STR, "%s %s", localTimeStr, durationStr);
+                tempStr[MAX_DURATION_STR] = 0;
+                list.SetItemText(iItem, iSubItem++, tempStr);
+            }
+        } else {
+            list.SetItemText(iItem, iSubItem++, "Not renewable");
+        }
+    }
+    if (sm_viewColumns[VALID_UNTIL].m_enabled) {
+        if (valid_until == 0) {
+            list.SetItemText(iItem, iSubItem++, "Unknown");
+        } else if (valid_until < now) {
+            list.SetItemText(iItem, iSubItem++, "Expired");
+        } else {
+            krb5TimestampToLocalizedString(valid_until, &localTimeStr);
+            DurationToString(valid_until - now, &durationStr);
+            if (localTimeStr && durationStr) {
+                _snprintf(tempStr, MAX_DURATION_STR, "%s %s", localTimeStr, durationStr);
+                tempStr[MAX_DURATION_STR] = 0;
+                list.SetItemText(iItem, iSubItem++, tempStr);
+            }
+        }
+    }
+
+    if (sm_viewColumns[ENCRYPTION_TYPE].m_enabled) {
+        list.SetItemText(iItem, iSubItem++, encTypes);
+    }
+    if (sm_viewColumns[TICKET_FLAGS].m_enabled) {
+        krb5TicketFlagsToString(flags, &flagsStr);
+        list.SetItemText(iItem, iSubItem++, flagsStr);
+    }
+    if (flagsStr)
+        free(flagsStr);
+    if (localTimeStr)
+        free(localTimeStr);
+    if (durationStr)
+        free(durationStr);
+}
+
+BOOL CLeashView::IsExpanded(TICKETINFO *info)
+{
+    CCacheDisplayData **pElem = FindCCacheDisplayData(info->ccache_name,
+                                                      &m_ccacheDisplay);
+    return (pElem && (*pElem)->m_expanded) ? TRUE : FALSE;
+}
+
+BOOL CLeashView::IsExpired(TICKETINFO *info)
+{
+    return LeashTime() > info->valid_until ? TRUE : FALSE;
+}
+
+BOOL CLeashView::IsExpired(TicketList *ticket)
+{
+    return LeashTime() > ticket->valid_until ? TRUE : FALSE;
+}
+
+CCacheDisplayData *
+FindCCacheDisplayElem(CCacheDisplayData *pElem, int itemIndex)
+{
+    while (pElem != NULL) {
+        if (pElem->m_index == itemIndex)
+            return pElem;
+        pElem = pElem->m_next;
+    }
+    return NULL;
 }
 
 VOID CLeashView::OnUpdateDisplay()
 {
     BOOL AfsEnabled = m_pApp->GetProfileInt("Settings", "AfsStatus", 1);
 
-    m_pTree = (CTreeCtrl*) GetDlgItem(IDC_TREEVIEW);
-    if (!m_pTree)
-    {
-        AfxMessageBox("There is a problem finding the Ticket Tree!",
-                    MB_OK|MB_ICONSTOP);
-        return;
+    CListCtrl& list = GetListCtrl();
+    // @TODO: there is probably a more sensible place to initialize these...
+    if ((m_BaseFont == NULL) && (list.GetFont())) {
+        m_BaseFont = *list.GetFont();
+        m_BoldFont = CreateBoldFont(m_BaseFont);
+        m_ItalicFont = CreateItalicFont(m_BaseFont);
+        m_BoldItalicFont = CreateBoldItalicFont(m_BaseFont);
+    }
+    // Determine currently focused item
+    int focusItem = list.GetNextItem(-1, LVNI_FOCUSED);
+    CCacheDisplayData *elem = m_ccacheDisplay;
+    while (elem) {
+        if (focusItem >= elem->m_index) {
+            elem->m_focus = focusItem - elem->m_index;
+            focusItem = -1;
+        } else {
+            elem->m_focus = -1;
+        }
+        elem = elem->m_next;
     }
 
-    m_pImageList = &m_imageList;
-    if (!m_pImageList)
-    {
-        AfxMessageBox("There is a problem finding images for the Ticket Tree!",
-                   MB_OK|MB_ICONSTOP);
-        return;
+    list.DeleteAllItems();
+    ModifyStyle(LVS_TYPEMASK, LVS_REPORT);
+	UpdateWindow();
+    // Delete all of the columns.
+    while (list.DeleteColumn(0));
+
+    list.SetImageList(&m_imageList, LVSIL_SMALL);
+
+    // Reconstruct based on current options
+    int columnIndex = 0;
+    int itemIndex = 0;
+    for (int i = 0; i < NUM_VIEW_COLUMNS; i++) {
+        ViewColumnInfo &info = sm_viewColumns[i];
+        if (info.m_enabled) {
+            list.InsertColumn(columnIndex++,
+                (info.m_name), // @LOCALIZEME!
+                LVCFMT_LEFT,
+                info.m_columnWidth,
+                itemIndex++);
+        }
     }
-
-    m_pTree->SetImageList(&m_imageList, TVSIL_NORMAL);
-
-    TV_INSERTSTRUCT m_tvinsert;
 
 #ifndef NO_KRB4
     INT ticketIconStatusKrb4;
@@ -861,7 +1285,6 @@ VOID CLeashView::OnUpdateDisplay()
 #ifndef NO_KRB4
     LONG krb4Error;
 #endif
-    LONG krb5Error;
     LONG afsError;
 
     if (WaitForSingleObject( ticketinfo.lockObj, 100 ) != WAIT_OBJECT_0)
@@ -873,24 +1296,20 @@ VOID CLeashView::OnUpdateDisplay()
 #endif
 
     // Get Kerb 5 tickets in list
-    krb5Error = pLeashKRB5GetTickets(&ticketinfo.Krb5, &m_listKrb5,
-                                     &CLeashApp::m_krbv5_context);
-    if (!krb5Error || krb5Error == KRB5_FCC_NOFILE)
+    LeashKRB5ListDefaultTickets(&ticketinfo.Krb5);
+    if (CLeashApp::m_hKrb5DLL && !CLeashApp::m_krbv5_profile)
     {
-        if (CLeashApp::m_hKrb5DLL && !CLeashApp::m_krbv5_profile)
+        CHAR confname[MAX_PATH];
+        if (CLeashApp::GetProfileFile(confname, sizeof(confname)))
         {
-            CHAR confname[MAX_PATH];
-            if (CLeashApp::GetProfileFile(confname, sizeof(confname)))
-            {
-                AfxMessageBox("Can't locate Kerberos Five Config. file!",
-                           MB_OK|MB_ICONSTOP);
-            }
-
-            const char *filenames[2];
-            filenames[0] = confname;
-            filenames[1] = NULL;
-            pprofile_init(filenames, &CLeashApp::m_krbv5_profile);
+            AfxMessageBox("Can't locate Kerberos Five Config. file!",
+                        MB_OK|MB_ICONSTOP);
         }
+
+        const char *filenames[2];
+        filenames[0] = confname;
+        filenames[1] = NULL;
+        pprofile_init(filenames, &CLeashApp::m_krbv5_profile);
     }
 
     // Get AFS Tokens in list
@@ -898,15 +1317,13 @@ VOID CLeashView::OnUpdateDisplay()
         char * principal;
         if ( ticketinfo.Krb5.principal[0] )
             principal = ticketinfo.Krb5.principal;
-        else if ( ticketinfo.Krb4.principal[0] )
-            principal = ticketinfo.Krb4.principal;
         else
             principal = "";
         afsError = pLeashAFSGetToken(&ticketinfo.Afs, &m_listAfs, principal);
     }
 
     /*
-     * Update Ticket Status for Krb4 and Krb5 so that we may use their state
+     * Update Ticket Status for Krb5 so that we may use their state
      * to select the appropriate Icon for the Parent Node
      */
 
@@ -947,8 +1364,9 @@ VOID CLeashView::OnUpdateDisplay()
     /* Krb5 */
     UpdateTicketTime(ticketinfo.Krb5);
     m_ticketStatusKrb5 = GetLowTicketStatus(5);
-    if (!m_listKrb5 || EXPIRED_TICKETS == ticketinfo.Krb5.btickets ||
-         m_ticketStatusKrb5 == ZERO_MINUTES_LEFT)
+    if ((!ticketinfo.Krb5.btickets) ||
+        EXPIRED_TICKETS == ticketinfo.Krb5.btickets ||
+        m_ticketStatusKrb5 == ZERO_MINUTES_LEFT)
     {
         ticketIconStatusKrb5 = EXPIRED_CLOCK;
         ticketIconStatus_SelectedKrb5 = EXPIRED_CLOCK;
@@ -1006,284 +1424,129 @@ VOID CLeashView::OnUpdateDisplay()
         iconStatusAfs = TICKET_NOT_INSTALLED;
     }
 
-    // Tree Structure common values
-    m_pTree->DeleteAllItems();
-
-    m_tvinsert.hParent = NULL;
-    m_tvinsert.hInsertAfter = TVI_LAST;
-    m_tvinsert.item.mask = TVIF_IMAGE | TVIF_SELECTEDIMAGE;
-    m_tvinsert.item.hItem = NULL;
-    m_tvinsert.item.state = 0;
-    m_tvinsert.item.stateMask = 0; //TVIS_EXPANDED;
-    m_tvinsert.item.cchTextMax = 6;
-
-    if (CLeashApp::m_hKrb5DLL && m_listKrb5) {
-        m_tvinsert.item.pszText = ticketinfo.Krb5.principal;
-        m_tvinsert.item.mask |= TVIF_TEXT;
+    int trayIcon = NONE_PARENT_NODE;
+    if (CLeashApp::m_hKrb5DLL && ticketinfo.Krb5.btickets) {
         switch ( iconStatusKrb5 ) {
         case ACTIVE_TICKET:
-            m_tvinsert.item.iSelectedImage = ACTIVE_PARENT_NODE;
+            trayIcon = ACTIVE_PARENT_NODE;
             break;
         case LOW_TICKET:
-            m_tvinsert.item.iSelectedImage = LOW_PARENT_NODE;
+            trayIcon = LOW_PARENT_NODE;
             break;
         case EXPIRED_TICKET:
-            m_tvinsert.item.iSelectedImage = EXPIRED_PARENT_NODE;
+            trayIcon = EXPIRED_PARENT_NODE;
             break;
         }
-////
-#ifndef NO_KRB4
-    } else if (CLeashApp::m_hKrb4DLL && m_listKrb4) {
-        m_tvinsert.item.pszText = ticketinfo.Krb4.principal;
-        m_tvinsert.item.mask |= TVIF_TEXT;
-        switch ( iconStatusKrb4 ) {
-        case ACTIVE_TICKET:
-            m_tvinsert.item.iSelectedImage = ACTIVE_PARENT_NODE;
-            break;
-        case LOW_TICKET:
-            m_tvinsert.item.iSelectedImage = LOW_PARENT_NODE;
-            break;
-        case EXPIRED_TICKET:
-            m_tvinsert.item.iSelectedImage = EXPIRED_PARENT_NODE;
-            break;
-        }
-#endif
-    } else {
-        m_tvinsert.item.iSelectedImage = NONE_PARENT_NODE;
-        m_tvinsert.item.pszText = NULL;
     }
-    m_tvinsert.item.iImage = m_tvinsert.item.iSelectedImage;
-    m_tvinsert.item.cChildren = 0;
-    m_tvinsert.item.lParam = 0;
-    m_tvinsert.hParent = NULL;
-    m_hPrincipal = m_pTree->InsertItem(&m_tvinsert);
+    SetTrayIcon(NIM_MODIFY, trayIcon);
 
-    SetTrayIcon(NIM_MODIFY, m_tvinsert.item.iImage);
+    CCacheDisplayData* prevCCacheDisplay = m_ccacheDisplay;
+    m_ccacheDisplay = NULL;
 
-    // Krb5
-    m_tvinsert.hParent = m_hPrincipal;
-
-    if (CLeashApp::m_hKrb5DLL)
-    {
-        // kerb5 installed
-        m_tvinsert.item.pszText = "Kerberos Five Tickets";
-        m_tvinsert.item.iImage = iconStatusKrb5;
-        m_tvinsert.item.iSelectedImage = iconStatusKrb5;
-    }
-    else
-    {
-        // kerb5 not installed
-        ticketinfo.Krb5.btickets = NO_TICKETS;
-        m_tvinsert.item.pszText = "Kerberos Five Tickets (Not Available)";
-        m_tvinsert.item.iImage = TICKET_NOT_INSTALLED;
-        m_tvinsert.item.iSelectedImage = TICKET_NOT_INSTALLED;
-    }
-
-    m_hKerb5 = m_pTree->InsertItem(&m_tvinsert);
-
-    TicketList* tempList = m_listKrb5, *killList;
-    while (tempList)
-    {
-        m_tvinsert.hParent = m_hKerb5;
-        m_tvinsert.item.iImage = ticketIconStatusKrb5;
-        m_tvinsert.item.iSelectedImage = ticketIconStatus_SelectedKrb5;
-        m_tvinsert.item.pszText = tempList->theTicket;
-        m_hk5tkt = m_pTree->InsertItem(&m_tvinsert);
-
-        if ( tempList->tktEncType ) {
-            m_tvinsert.hParent = m_hk5tkt;
-            m_tvinsert.item.iImage = TKT_ENCRYPTION;
-            m_tvinsert.item.iSelectedImage = TKT_ENCRYPTION;
-            m_tvinsert.item.pszText = tempList->tktEncType;
-            m_pTree->InsertItem(&m_tvinsert);
+    const char *def_ccache_name = ticketinfo.Krb5.ccache_name;
+    TICKETINFO *principallist = NULL;
+    LeashKRB5ListAllTickets(&principallist);
+    int iItem = 0;
+    TicketList* tempList;
+    TICKETINFO *principal = principallist;
+    while (principal != NULL) {
+        CCacheDisplayData **pOldElem;
+        pOldElem = FindCCacheDisplayData(principal->ccache_name,
+                                         &prevCCacheDisplay);
+        if (pOldElem) {
+            // remove from old list
+            elem = *pOldElem;
+            *pOldElem = elem->m_next;
+            elem->m_next = NULL;
+        } else {
+            elem = new CCacheDisplayData(principal->ccache_name);
         }
-        if ( tempList->keyEncType ) {
-            m_tvinsert.hParent = m_hk5tkt;
-            m_tvinsert.item.iImage = TKT_SESSION;
-            m_tvinsert.item.iSelectedImage = TKT_SESSION;
-            m_tvinsert.item.pszText = tempList->keyEncType;
-            m_pTree->InsertItem(&m_tvinsert);
-        }
+        elem->m_isDefault = def_ccache_name &&
+                            (strcmp(def_ccache_name, elem->m_ccacheName) == 0);
+        elem->m_isRenewable = principal->renew_until != 0;
 
-        if ( tempList->addrCount && tempList->addrList ) {
-            for ( int n=0; n<tempList->addrCount; n++ ) {
-                m_tvinsert.hParent = m_hk5tkt;
-                m_tvinsert.item.iImage = TKT_ADDRESS;
-                m_tvinsert.item.iSelectedImage = TKT_ADDRESS;
-                m_tvinsert.item.pszText = tempList->addrList[n];
-                m_pTree->InsertItem(&m_tvinsert);
+        elem->m_next = m_ccacheDisplay;
+        m_ccacheDisplay = elem;
+        elem->m_index = iItem;
+
+        AddDisplayItem(list,
+                       elem,
+                       iItem++,
+                       principal->principal,
+                       principal->issued,
+                       principal->valid_until,
+                       principal->renew_until,
+                       "",
+                       principal->flags);
+        if (elem->m_expanded) {
+            for (tempList = principal->ticket_list;
+                 tempList != NULL;
+                 tempList = tempList->next) {
+                AddDisplayItem(list,
+                               elem,
+                               iItem++,
+                               tempList->service,
+                               tempList->issued,
+                               tempList->valid_until,
+                               tempList->renew_until,
+                               tempList->encTypes,
+                               tempList->flags);
             }
         }
-        tempList = tempList->next;
-    }
-
-    pLeashFreeTicketList(&m_listKrb5);
-
-    if (m_hKerb5State == NODE_IS_EXPANDED)
-        m_pTree->Expand(m_hKerb5, TVE_EXPAND);
-
-    // Krb4
-    m_tvinsert.hParent = m_hPrincipal;
-
-#ifndef NO_KRB4
-    if (CLeashApp::m_hKrb4DLL)
-    {
-        m_tvinsert.item.pszText = "Kerberos Four Tickets";
-        m_tvinsert.item.iImage = iconStatusKrb4;
-        m_tvinsert.item.iSelectedImage = iconStatusKrb4;
-    }
-    else
-    {
-#endif
-////Can this be removed altogether?
-        ticketinfo.Krb4.btickets = NO_TICKETS;
-        m_tvinsert.item.pszText = "Kerberos Four Tickets (Not Available)";
-        m_tvinsert.item.iImage = TICKET_NOT_INSTALLED;
-        m_tvinsert.item.iSelectedImage = TICKET_NOT_INSTALLED;
-#ifndef NO_KRB4
-    }
-#endif
-
-#ifndef NO_KRB4
-    m_hKerb4 = m_pTree ->InsertItem(&m_tvinsert);
-
-    if (m_hPrincipalState == NODE_IS_EXPANDED)
-        m_pTree->Expand(m_hPrincipal, TVE_EXPAND);
-
-    m_tvinsert.hParent = m_hKerb4;
-    m_tvinsert.item.iImage = ticketIconStatusKrb4;
-    m_tvinsert.item.iSelectedImage = ticketIconStatus_SelectedKrb4;
-
-
-////What does the original do?
-    tempList = m_listKrb4, *killList;
-    while (tempList)
-    {
-        m_tvinsert.item.pszText = tempList->theTicket;
-        m_pTree->InsertItem(&m_tvinsert);
-        tempList = tempList->next;
-    }
-
-    pLeashFreeTicketList(&m_listKrb4);
-
-    if (m_hKerb4State == NODE_IS_EXPANDED)
-        m_pTree->Expand(m_hKerb4, TVE_EXPAND);
-#endif
-
-    // AFS
-    m_tvinsert.hParent = m_hPrincipal;
-
-    if (!CLeashApp::m_hAfsDLL)
-    { // AFS service not started or just no tickets
-        m_tvinsert.item.pszText = "AFS Tokens (Not Available)";
-        m_tvinsert.item.iImage = TICKET_NOT_INSTALLED;
-        m_tvinsert.item.iSelectedImage = TICKET_NOT_INSTALLED;
-    }
-
-    if (!afsError && CLeashApp::m_hAfsDLL && m_tvinsert.item.pszText)
-    { // AFS installed
-
-        if (AfsEnabled)
-        {
-            m_tvinsert.item.pszText = "AFS Tokens";
-            m_tvinsert.item.iImage = iconStatusAfs;
-            m_tvinsert.item.iSelectedImage = iconStatusAfs;
+        if ((elem->m_focus >= 0) &&
+            (iItem > elem->m_index + elem->m_focus)) {
+            list.SetItemState(elem->m_index + elem->m_focus, LVIS_FOCUSED,
+                              LVIS_FOCUSED);
         }
-	else
-        {
-            m_tvinsert.item.pszText = "AFS Tokens (Disabled)";
-            m_tvinsert.item.iImage = TICKET_NOT_INSTALLED;
-            m_tvinsert.item.iSelectedImage = TICKET_NOT_INSTALLED;
+        if (elem->m_selected)
+            list.SetItemState(elem->m_index, LVIS_SELECTED, LVIS_SELECTED);
+
+        principal = principal->next;
+    }
+
+    // create list item font data array
+    if (m_aListItemInfo != NULL)
+        delete[] m_aListItemInfo;
+    m_aListItemInfo = new ListItemInfo[iItem];
+    iItem = 0;
+    for (principal = principallist; principal != NULL;
+         principal = principal->next) {
+        //
+        HFONT font, durationFont;
+        elem = FindCCacheDisplayElem(m_ccacheDisplay, iItem);
+        if (elem != NULL && elem->m_isDefault) {
+            font = m_BoldFont;
+            durationFont = IsExpired(principal) ? m_BoldItalicFont : m_BoldFont;
+        } else {
+            font = m_BaseFont;
+            durationFont = IsExpired(principal) ? m_ItalicFont : m_BaseFont;
         }
+        m_aListItemInfo[iItem].m_font = font;
+        m_aListItemInfo[iItem++].m_durationFont = durationFont;
 
-        m_hAFS = m_pTree->InsertItem(&m_tvinsert);
-
-        m_tvinsert.hParent = m_hAFS;
-        m_tvinsert.item.iImage = ticketIconStatusAfs;
-        m_tvinsert.item.iSelectedImage = ticketIconStatus_SelectedAfs;
-
-        tempList = m_listAfs, *killList;
-        while (tempList)
-        {
-            m_tvinsert.item.pszText = tempList->theTicket;
-            m_pTree->InsertItem(&m_tvinsert);
-            tempList = tempList->next;
-        }
-
-        pLeashFreeTicketList(&m_listAfs);
-
-        if (m_hAFSState == NODE_IS_EXPANDED)
-            m_pTree->Expand(m_hAFS, TVE_EXPAND);
-    }
-    else if (!afsError && CLeashApp::m_hAfsDLL && !m_tvinsert.item.pszText)
-    {
-        m_tvinsert.item.pszText = "AFS Tokens";
-        m_tvinsert.item.iImage = EXPIRED_TICKET;;
-        m_tvinsert.item.iSelectedImage = EXPIRED_TICKET;
-    }
-
-    if (m_startup)
-    {
-        //m_startup = FALSE;
-        UpdateTicketTime(ticketinfo.Krb4);
-    }
-
-    CString sPrincipal = ticketinfo.Krb5.principal;
-    if (sPrincipal.IsEmpty())
-        sPrincipal = ticketinfo.Krb4.principal;
-
-	// if no tickets
-	if (!ticketinfo.Krb4.btickets && !ticketinfo.Krb5.btickets)
-		sPrincipal = " No Tickets ";
-
-	// if no tickets and tokens
-    if (!ticketinfo.Krb4.btickets && !ticketinfo.Krb5.btickets && !ticketinfo.Afs.btickets) //&& sPrincipal.IsEmpty())
-    {
-        // No tickets
-        m_pTree->DeleteAllItems();
-
-        m_tvinsert.hParent = NULL;
-        m_tvinsert.item.pszText = " No Tickets/Tokens ";
-        m_tvinsert.item.iImage = NONE_PARENT_NODE;
-        m_tvinsert.item.iSelectedImage = NONE_PARENT_NODE;
-        m_hPrincipal = m_pTree->InsertItem(&m_tvinsert);
-
-        if (CMainFrame::m_wndToolBar)
-        {
-            CToolBarCtrl *_toolBar = NULL;
-            CToolBarCtrl& toolBar = CMainFrame::m_wndToolBar.GetToolBarCtrl();
-            _toolBar = &toolBar;
-            if (_toolBar)
-            {
-                toolBar.SetState(ID_DESTROY_TICKET, TBSTATE_INDETERMINATE);
-            }
-            else
-            {
-                AfxMessageBox("There is a problem with the Leash Toolbar!",
-                           MB_OK|MB_ICONSTOP);
+        if (IsExpanded(principal)) {
+            for (TicketList *ticket = principal->ticket_list;
+                 ticket != NULL; ticket = ticket->next) {
+                font = m_BaseFont;
+                durationFont = IsExpired(ticket) ? m_ItalicFont : m_BaseFont;
+                m_aListItemInfo[iItem].m_font = font;
+                m_aListItemInfo[iItem++].m_durationFont = durationFont;
             }
         }
     }
-    else
-    {
-        // We have some tickets
-        m_pTree->SetItemText(m_hPrincipal, sPrincipal);
 
-        if (CMainFrame::m_wndToolBar)
-        {
-            CToolBarCtrl *_toolBar = NULL;
-            CToolBarCtrl& toolBar = CMainFrame::m_wndToolBar.GetToolBarCtrl();
-            _toolBar = &toolBar;
-            if (_toolBar)
-            {
-                toolBar.SetState(ID_DESTROY_TICKET, TBSTATE_ENABLED);
-            }
-            else
-            {
-                AfxMessageBox("There is a problem with the Leash Toolbar!", MB_OK|MB_ICONSTOP);
-            }
-        }
+    // delete ccache items that no longer exist
+    while (prevCCacheDisplay != NULL) {
+        CCacheDisplayData *next = prevCCacheDisplay->m_next;
+        delete prevCCacheDisplay;
+        prevCCacheDisplay = next;
     }
+
+    LeashKRB5FreeTicketInfo(&ticketinfo.Krb5);
+    LeashKRB5FreeTickets(&principallist);
+
+    // @TODO: AFS-specific here
+
     ReleaseMutex(ticketinfo.lockObj);
 }
 
@@ -1300,7 +1563,7 @@ VOID CLeashView::OnActivateView(BOOL bActivate, CView* pActivateView,
 
     if (m_alreadyPlayed)
     {
-        CFormView::OnActivateView(bActivate, pActivateView, pDeactiveView);
+        CListView::OnActivateView(bActivate, pActivateView, pDeactiveView);
         return;
     }
 
@@ -1314,63 +1577,52 @@ VOID CLeashView::OnActivateView(BOOL bActivate, CView* pActivateView,
     } else {
         return;
     }
-    if( m_hMenu == NULL )
-    {
-        AfxMessageBox("There is a problem finding the Leash main menu!",
-                   MB_OK|MB_ICONSTOP);
-        return;
-    }
-    if (!m_largeIcons)
-        check = CheckMenuItem(m_hMenu, ID_LARGE_ICONS, MF_CHECKED);
-    else
-        check = CheckMenuItem(m_hMenu, ID_LARGE_ICONS, MF_UNCHECKED);
 
-    if( check != MF_CHECKED || check != MF_UNCHECKED )
-    {
-        m_debugStartUp = 1;
-    }
+    if (m_hMenu) {
+        if (!m_largeIcons)
+            check = CheckMenuItem(m_hMenu, ID_LARGE_ICONS, MF_CHECKED);
+        else
+            check = CheckMenuItem(m_hMenu, ID_LARGE_ICONS, MF_UNCHECKED);
 
-    if (!m_destroyTicketsOnExit)
-        check = CheckMenuItem(m_hMenu, ID_KILL_TIX_ONEXIT, MF_UNCHECKED);
-    else
-        check = CheckMenuItem(m_hMenu, ID_KILL_TIX_ONEXIT, MF_CHECKED);
+        if( check != MF_CHECKED || check != MF_UNCHECKED )
+        {
+            m_debugStartUp = 1;
+        }
 
-    if (!m_upperCaseRealm)
-        check = CheckMenuItem(m_hMenu, ID_UPPERCASE_REALM, MF_UNCHECKED);
-    else
-        check = CheckMenuItem(m_hMenu, ID_UPPERCASE_REALM, MF_CHECKED);
+        if (!m_destroyTicketsOnExit)
+            check = CheckMenuItem(m_hMenu, ID_KILL_TIX_ONEXIT, MF_UNCHECKED);
+        else
+            check = CheckMenuItem(m_hMenu, ID_KILL_TIX_ONEXIT, MF_CHECKED);
 
-    if (!m_lowTicketAlarm)
-    {
-        m_lowTicketAlarmSound = FALSE;
+        if (!m_upperCaseRealm)
+            check = CheckMenuItem(m_hMenu, ID_UPPERCASE_REALM, MF_UNCHECKED);
+        else
+            check = CheckMenuItem(m_hMenu, ID_UPPERCASE_REALM, MF_CHECKED);
 
-        if (m_hMenu)
+        for (int i=0; i<NUM_VIEW_COLUMNS; i++) {
+            ViewColumnInfo &info = sm_viewColumns[i];
+            if (info.m_id >= 0)
+                CheckMenuItem(m_hMenu, info.m_id,
+                              info.m_enabled ? MF_CHECKED : MF_UNCHECKED);
+        }
+
+        if (!m_lowTicketAlarm)
             CheckMenuItem(m_hMenu, ID_LOW_TICKET_ALARM, MF_UNCHECKED);
-    }
-    else
-    {
-        m_lowTicketAlarmSound = TRUE;
-        if (m_hMenu)
+        else
             CheckMenuItem(m_hMenu, ID_LOW_TICKET_ALARM, MF_CHECKED);
-    }
 
-    if (!m_autoRenewTickets)
-    {
-        if (m_hMenu)
+        if (!m_autoRenewTickets)
             CheckMenuItem(m_hMenu, ID_AUTO_RENEW, MF_UNCHECKED);
-    }
-    else
-    {
-        if (m_hMenu)
+        else
             CheckMenuItem(m_hMenu, ID_AUTO_RENEW, MF_CHECKED);
+
+        m_debugWindow = m_pApp->GetProfileInt("Settings", "DebugWindow", 0);
+        if (!m_debugWindow)
+            check = CheckMenuItem(m_hMenu, ID_DEBUG_MODE, MF_UNCHECKED);
+        else
+            check = CheckMenuItem(m_hMenu, ID_DEBUG_MODE, MF_CHECKED);
     }
-
-    m_debugWindow = m_pApp->GetProfileInt("Settings", "DebugWindow", 0);
-    if (!m_debugWindow)
-        check = CheckMenuItem(m_hMenu, ID_DEBUG_MODE, MF_UNCHECKED);
-    else
-        check = CheckMenuItem(m_hMenu, ID_DEBUG_MODE, MF_CHECKED);
-
+    m_lowTicketAlarmSound = !!m_lowTicketAlarm;
     m_alreadyPlayed = TRUE;
     if (m_pApp)
     {
@@ -1405,7 +1657,7 @@ VOID CLeashView::OnActivateView(BOOL bActivate, CView* pActivateView,
 
     m_debugStartUp = FALSE;
 
-    CFormView::OnActivateView(bActivate, pActivateView, pDeactiveView);
+    CListView::OnActivateView(bActivate, pActivateView, pDeactiveView);
 }
 
 ////@#+Is this KRB4 only?
@@ -1484,6 +1736,71 @@ VOID CLeashView::OnDebugMode()
     { // displays the Debug Window
         m_pDebugWindow->Create(debugFilePath);
     }
+}
+
+void CLeashView::ToggleViewColumn(eViewColumn viewOption)
+{
+    if ((viewOption < 0) || (viewOption >= NUM_VIEW_COLUMNS)) {
+        //LeashWarn("ToggleViewColumn(): invalid view option index %i", viewOption);
+        return;
+    }
+    ViewColumnInfo &info = sm_viewColumns[viewOption];
+    info.m_enabled = !info.m_enabled;
+    if (m_pApp)
+        m_pApp->WriteProfileInt("Settings", info.m_name, info.m_enabled);
+    // Don't update display immediately; wait for next idle so our
+    // checkbox controls will be more responsive
+    CLeashApp::m_bUpdateDisplay = TRUE;
+}
+
+VOID CLeashView::OnRenewableUntil()
+{
+    ToggleViewColumn(RENEWABLE_UNTIL);
+}
+
+VOID CLeashView::OnUpdateRenewableUntil(CCmdUI *pCmdUI)
+{
+    pCmdUI->SetCheck(sm_viewColumns[RENEWABLE_UNTIL].m_enabled);
+}
+
+VOID CLeashView::OnShowTicketFlags()
+{
+    ToggleViewColumn(TICKET_FLAGS);
+}
+
+VOID CLeashView::OnUpdateShowTicketFlags(CCmdUI *pCmdUI)
+{
+    pCmdUI->SetCheck(sm_viewColumns[TICKET_FLAGS].m_enabled);
+}
+
+VOID CLeashView::OnTimeIssued()
+{
+    ToggleViewColumn(TIME_ISSUED);
+}
+
+VOID CLeashView::OnUpdateTimeIssued(CCmdUI *pCmdUI)
+{
+    pCmdUI->SetCheck(sm_viewColumns[TIME_ISSUED].m_enabled);
+}
+
+VOID CLeashView::OnValidUntil()
+{
+    ToggleViewColumn(VALID_UNTIL);
+}
+
+VOID CLeashView::OnUpdateValidUntil(CCmdUI *pCmdUI)
+{
+    pCmdUI->SetCheck(sm_viewColumns[VALID_UNTIL].m_enabled);
+}
+
+VOID CLeashView::OnEncryptionType()
+{
+    ToggleViewColumn(ENCRYPTION_TYPE);
+}
+
+VOID CLeashView::OnUpdateEncryptionType(CCmdUI *pCmdUI)
+{
+    pCmdUI->SetCheck(sm_viewColumns[ENCRYPTION_TYPE].m_enabled);
 }
 
 VOID CLeashView::OnLargeIcons()
@@ -1589,73 +1906,35 @@ VOID CLeashView::OnLargeIcons()
         m_imageList.Add(hIcon[n]);
     }
 
-    m_pTree = (CTreeCtrl*) GetDlgItem(IDC_TREEVIEW);
-    m_pTree->SetItemHeight(y+2);
-
     if (!m_startup)
         SendMessage(WM_COMMAND, ID_UPDATE_DISPLAY, 0);
 }
 
 VOID CLeashView::OnKillTixOnExit()
 {
-    if (m_destroyTicketsOnExit%2 == 0)
-        m_destroyTicketsOnExit = ON;
-    else
-        m_destroyTicketsOnExit = OFF;
+    m_destroyTicketsOnExit = !m_destroyTicketsOnExit;
 
     if (m_pApp)
-    {
-        if (!m_destroyTicketsOnExit)
-        {
-            if (m_hMenu)
-                CheckMenuItem(m_hMenu, ID_KILL_TIX_ONEXIT, MF_UNCHECKED);
+        m_pApp->WriteProfileInt("Settings", "DestroyTicketsOnExit",
+                                m_destroyTicketsOnExit);
+}
 
-            AfxMessageBox("Tickets will be not be destroyed upon exiting Leash!!!",
-                       MB_OK|MB_ICONWARNING);
-            m_pApp->WriteProfileInt("Settings", "DestroyTicketsOnExit",
-                                    FALSE_FLAG);
-        }
-        else
-        {
-            if (m_hMenu)
-                CheckMenuItem(m_hMenu, ID_KILL_TIX_ONEXIT, MF_CHECKED);
-
-            AfxMessageBox("All tickets/tokens will be destroyed upon exiting Leash!!!",
-                       MB_OK|MB_ICONWARNING);
-            m_pApp->WriteProfileInt("Settings", "DestroyTicketsOnExit", TRUE_FLAG);
-        }
-    }
-    else
-    {
-        ApplicationInfoMissingMsg();
-    }
+VOID CLeashView::OnUpdateKillTixOnExit(CCmdUI *pCmdUI)
+{
+    pCmdUI->SetCheck(m_destroyTicketsOnExit);
 }
 
 VOID CLeashView::OnUppercaseRealm()
 {
-    if (m_upperCaseRealm%2 == 0)
-        m_upperCaseRealm = ON;
-    else
-        m_upperCaseRealm = OFF;
+    m_upperCaseRealm = !m_upperCaseRealm;
 
-    if (!m_pApp)
-    {
-        ApplicationInfoMissingMsg();
-    }
-    else if (!m_upperCaseRealm)
-    {
-        pLeash_set_default_uppercaserealm(FALSE_FLAG);
+    pLeash_set_default_uppercaserealm(m_upperCaseRealm);
+}
 
-        if (m_hMenu)
-            CheckMenuItem(m_hMenu, ID_UPPERCASE_REALM, MF_UNCHECKED);
-    }
-    else
-    {
-        pLeash_set_default_uppercaserealm(TRUE_FLAG);
-
-        if (m_hMenu)
-            CheckMenuItem(m_hMenu, ID_UPPERCASE_REALM, MF_CHECKED);
-    }
+VOID CLeashView::OnUpdateUppercaseRealm(CCmdUI *pCmdUI)
+{
+    // description is now 'allow mixed case', so reverse logic
+    pCmdUI->SetCheck(!m_upperCaseRealm);
 }
 
 VOID CLeashView::ResetTreeNodes()
@@ -1670,49 +1949,37 @@ VOID CLeashView::ResetTreeNodes()
 
 VOID CLeashView::OnDestroy()
 {
+    CCacheDisplayData *elem;
     SetTrayIcon(NIM_DELETE);
 
-    CFormView::OnDestroy();
-    if (WaitForSingleObject( ticketinfo.lockObj, INFINITE ) != WAIT_OBJECT_0)
-        throw("Unable to lock ticketinfo");
-    BOOL b_destroy = m_destroyTicketsOnExit && (ticketinfo.Krb4.btickets || ticketinfo.Krb5.btickets);
-    ReleaseMutex(ticketinfo.lockObj);
-
-    if (b_destroy)
-    {
-        if (pLeash_kdestroy())
-        {
-            AfxMessageBox("There is a problem destroying tickets!",
-                       MB_OK|MB_ICONSTOP);
+    if (m_destroyTicketsOnExit) {
+        elem = m_ccacheDisplay;
+        while (elem != NULL) {
+            kdestroy(elem->m_ccacheName);
+            elem = elem->m_next;
         }
     }
+    CListView::OnDestroy();
 }
 
 VOID CLeashView::OnUpdateDestroyTicket(CCmdUI* pCmdUI)
 {
-    if (!CLeashApp::m_hAfsDLL)
-        pCmdUI->SetText("&Destroy Ticket(s)\tCtrl+D");
-    else
-        pCmdUI->SetText("&Destroy Ticket(s)/Token(s)\tCtrl+D");
+    // @TODO: mutex
+    BOOL enable = FALSE;
+    CCacheDisplayData *elem = m_ccacheDisplay;
+    while (elem != NULL) {
+        if (elem->m_selected) {
+            enable = TRUE;
+            break;
+        }
+        elem = elem->m_next;
+    }
 
-    if (WaitForSingleObject( ticketinfo.lockObj, INFINITE ) != WAIT_OBJECT_0)
-        throw("Unable to lock ticketinfo");
-    BOOL b_enable =!ticketinfo.Krb4.btickets && !ticketinfo.Krb5.btickets && !ticketinfo.Afs.btickets;
-    ReleaseMutex(ticketinfo.lockObj);
-
-    if (b_enable)
-        pCmdUI->Enable(FALSE);
-    else
-        pCmdUI->Enable(TRUE);
+    pCmdUI->Enable(enable);
 }
 
 VOID CLeashView::OnUpdateInitTicket(CCmdUI* pCmdUI)
 {
-    if (!CLeashApp::m_hAfsDLL)
-        pCmdUI->SetText("&Get Ticket(s)\tCtrl+T");
-    else
-        pCmdUI->SetText("&Get Ticket(s)/Token(s)\tCtrl+T");
-
     if (
 ////Is this logic correct?
 #ifndef NO_KRB4
@@ -1727,39 +1994,24 @@ VOID CLeashView::OnUpdateInitTicket(CCmdUI* pCmdUI)
 
 VOID CLeashView::OnUpdateRenewTicket(CCmdUI* pCmdUI)
 {
-    if (!CLeashApp::m_hAfsDLL)
-        pCmdUI->SetText("&Renew Ticket(s)\tCtrl+R");
-    else
-        pCmdUI->SetText("&Renew Ticket(s)/Token(s)\tCtrl+R");
+    // @TODO: mutex
+    BOOL enable = FALSE;
+    CCacheDisplayData *elem = m_ccacheDisplay;
+    while (elem != NULL) {
+        if (elem->m_selected) { // @TODO: && elem->m_renewable
+            enable = TRUE;
+            break;
+        }
+        elem = elem->m_next;
+    }
 
-    if (WaitForSingleObject( ticketinfo.lockObj, INFINITE ) != WAIT_OBJECT_0)
-        throw("Unable to lock ticketinfo");
-    BOOL b_enable = !(
-#ifndef NO_KRB4
-	ticketinfo.Krb4.btickets ||
-#endif
-	ticketinfo.Krb5.btickets) ||
-////Not sure about the boolean logic here
-#ifndef NO_KRB4
-                    !CLeashApp::m_hKrb4DLL &&
-#endif
-		    !CLeashApp::m_hKrb5DLL && !CLeashApp::m_hAfsDLL;
-    ReleaseMutex(ticketinfo.lockObj);
-
-    if (b_enable)
-        pCmdUI->Enable(FALSE);
-    else
-        pCmdUI->Enable(TRUE);
+    pCmdUI->Enable(enable);
 }
 
 VOID CLeashView::OnUpdateImportTicket(CCmdUI* pCmdUI)
 {
     bool ccIsMSLSA = false;
 
-#ifndef KRB5_TC_NOTICKET
-    if (WaitForSingleObject( m_tgsReqMutex, INFINITE ) != WAIT_OBJECT_0)
-        throw("Unable to lock TGS request mutex");
-#endif
     if (CLeashApp::m_krbv5_context)
     {
         const char *ccName = pkrb5_cc_default_name(CLeashApp::m_krbv5_context);
@@ -1772,9 +2024,6 @@ VOID CLeashView::OnUpdateImportTicket(CCmdUI* pCmdUI)
         pCmdUI->Enable(FALSE);
     else
         pCmdUI->Enable(TRUE);
-#ifndef KRB5_TC_NOTICKET
-    ReleaseMutex(m_tgsReqMutex);
-#endif
 }
 
 LRESULT CLeashView::OnGoodbye(WPARAM wParam, LPARAM lParam)
@@ -1817,15 +2066,11 @@ LRESULT CLeashView::OnTrayIcon(WPARAM wParam, LPARAM lParam)
             CMenu * menu = new CMenu();
             menu->CreatePopupMenu();
             if ( !CMainFrame::m_isMinimum )
-                menu->AppendMenu(MF_STRING, ID_LEASH_MINIMIZE, "&Close Leash Window");
+                menu->AppendMenu(MF_STRING, ID_LEASH_MINIMIZE, "&Close MIT Kerberos Window");
             else
-                menu->AppendMenu(MF_STRING, ID_LEASH_RESTORE, "&Open Leash Window");
+                menu->AppendMenu(MF_STRING, ID_LEASH_RESTORE, "&Open MIT Kerberos Window");
             menu->AppendMenu(MF_SEPARATOR);
             menu->AppendMenu(MF_STRING, ID_INIT_TICKET, "&Get Tickets");
-#ifndef KRB5_TC_NOTICKET
-            if (WaitForSingleObject( m_tgsReqMutex, INFINITE ) != WAIT_OBJECT_0)
-                throw("Unable to lock TGS request mutex");
-#endif
             if (WaitForSingleObject( ticketinfo.lockObj, INFINITE ) != WAIT_OBJECT_0)
                 throw("Unable to lock ticketinfo");
             if (!(
@@ -1848,14 +2093,11 @@ LRESULT CLeashView::OnTrayIcon(WPARAM wParam, LPARAM lParam)
             else
                 nFlags = MF_STRING;
             menu->AppendMenu(MF_STRING, ID_IMPORT_TICKET, "&Import Tickets");
-            if (!ticketinfo.Krb4.btickets && !ticketinfo.Krb5.btickets && !ticketinfo.Afs.btickets)
+            if (!ticketinfo.Krb5.btickets && !ticketinfo.Afs.btickets)
                 nFlags = MF_STRING | MF_GRAYED;
             else
                 nFlags = MF_STRING;
             ReleaseMutex(ticketinfo.lockObj);
-#ifndef KRB5_TC_NOTICKET
-            ReleaseMutex(m_tgsReqMutex);
-#endif
             menu->AppendMenu(MF_STRING, ID_DESTROY_TICKET, "&Destroy Tickets");
             menu->AppendMenu(MF_STRING, ID_CHANGE_PASSWORD, "&Change Password");
 
@@ -1895,6 +2137,8 @@ LRESULT CLeashView::OnTrayIcon(WPARAM wParam, LPARAM lParam)
 VOID CLeashView::OnAppAbout()
 {
     CLeashAboutBox leashAboutBox;
+    // To debug loaded dlls:
+    // leashAboutBox.m_bListModules = TRUE;
     leashAboutBox.DoModal();
 }
 
@@ -1907,7 +2151,7 @@ VOID CLeashView::OnAfsControlPanel()
 
 VOID CLeashView::OnInitialUpdate()
 {
-    CFormView::OnInitialUpdate();
+    CListView::OnInitialUpdate();
     CLeashApp::m_hProgram = ::FindWindow(_T("LEASH.0WNDCLASS"), NULL);
     EnableToolTips();
 }
@@ -2106,11 +2350,9 @@ BOOL CLeashView::PreTranslateMessage(MSG* pMsg)
         try {
         if (InterlockedDecrement(&m_timerMsgNotInProgress) == 0) {
 
-            CString ticketStatusKrb4 = TCHAR(NOT_INSTALLED);
             CString ticketStatusKrb5 = TCHAR(NOT_INSTALLED);
             CString ticketStatusAfs  = TCHAR(NOT_INSTALLED);
             CString strTimeDate;
-            CString lowTicketWarningKrb4;
             CString lowTicketWarningKrb5;
             CString lowTicketWarningAfs;
 
@@ -2186,136 +2428,29 @@ BOOL CLeashView::PreTranslateMessage(MSG* pMsg)
                             ticketStatusKrb5.Format("Kerb-5 Ticket Life: < 1 min");
                         }
                     }
-
+#ifndef NO_STATUS_BAR
                     if (CMainFrame::m_wndStatusBar)
                     {
                         CMainFrame::m_wndStatusBar.SetPaneInfo(1, 111112, SBPS_NORMAL, 130);
                         CMainFrame::m_wndStatusBar.SetPaneText(1, ticketStatusKrb5, SBT_POPOUT);
                     }
+#endif
                 }
             }
             else
             {
                 // not installed
                 ticketStatusKrb5.Format("Kerb-5: Not Available");
-
+#ifndef NO_STATUS_BAR
                 if (CMainFrame::m_wndStatusBar)
                 {
                     CMainFrame::m_wndStatusBar.SetPaneInfo(1, 111112, SBPS_NORMAL, 130);
                     CMainFrame::m_wndStatusBar.SetPaneText(1, ticketStatusKrb5, SBT_POPOUT);
                 }
+#endif
             }
             //KRB5
 
-#ifndef NO_KRB4
-            if (CLeashApp::m_hKrb4DLL)
-            {
-                // KRB4
-                UpdateTicketTime(ticketinfo.Krb4);
-                if (!ticketinfo.Krb4.btickets)
-                {
-                    ticketStatusKrb4 = "Kerb-4: No Tickets";
-                }
-                else if (EXPIRED_TICKETS == ticketinfo.Krb4.btickets)
-                {
-#ifndef NO_KRB5
-                    if (ticketinfo.Krb5.btickets &&
-                         EXPIRED_TICKETS != ticketinfo.Krb5.btickets &&
-                         m_autoRenewTickets &&
-                         !m_autoRenewalAttempted &&
-                         ticketinfo.Krb5.renew_till &&
-                         (ticketinfo.Krb5.issue_date + ticketinfo.Krb5.renew_till -LeashTime() > 20 * 60) &&
-                         pLeash_get_default_use_krb4()
-                         )
-                    {
-                        m_autoRenewalAttempted = 1;
-                        ReleaseMutex(ticketinfo.lockObj);
-                        AfxBeginThread(RenewTicket,m_hWnd);
-                        goto timer_start;
-                    }
-#endif /* NO_KRB5 */
-                    ticketStatusKrb4 = "Kerb-4: Expired Tickets";
-                    lowTicketWarningKrb4 = "Your Kerberos Four ticket(s) have expired";
-                    if (!m_warningOfTicketTimeLeftLockKrb4)
-                        m_warningOfTicketTimeLeftKrb4 = 0;
-                    m_warningOfTicketTimeLeftLockKrb4 = ZERO_MINUTES_LEFT;
-                    m_ticketTimeLeft = 0;
-                }
-                else if ( pLeash_get_default_use_krb4() )
-                {
-                    m_ticketStatusKrb4 = GetLowTicketStatus(4);
-                    switch (m_ticketStatusKrb4)
-                    {
-                    case FIFTEEN_MINUTES_LEFT:
-                        ticketinfo.Krb4.btickets = TICKETS_LOW;
-                        lowTicketWarningKrb4 = "Less then 15 minutes left on your Kerberos Four ticket(s)";
-                        break;
-                    case TEN_MINUTES_LEFT:
-                        ticketinfo.Krb4.btickets = TICKETS_LOW;
-                        lowTicketWarningKrb4 = "Less then 10 minutes left on your Kerberos Four ticket(s)";
-                        if (!m_warningOfTicketTimeLeftLockKrb4)
-                            m_warningOfTicketTimeLeftKrb4 = 0;
-                        m_warningOfTicketTimeLeftLockKrb4 = TEN_MINUTES_LEFT;
-                        break;
-                    case FIVE_MINUTES_LEFT:
-                        ticketinfo.Krb4.btickets = TICKETS_LOW;
-                        if (m_warningOfTicketTimeLeftLockKrb4 == TEN_MINUTES_LEFT)
-                            m_warningOfTicketTimeLeftKrb4 = 0;
-                        m_warningOfTicketTimeLeftLockKrb4 = FIVE_MINUTES_LEFT;
-                        lowTicketWarningKrb4 = "Less then 5 minutes left on your Kerberos Four ticket(s)";
-                        break;
-                    default:
-                        m_ticketStatusKrb4 = 0;
-                        break;
-                    }
-
-                }
-
-                if (CMainFrame::m_isMinimum)
-                {
-                    // minimized dispay
-                    ticketStatusKrb4.Format("Kerb-4: %02d:%02d Left",
-                                             (m_ticketTimeLeft / 60L / 60L),
-                                             (m_ticketTimeLeft / 60L % 60L));
-                }
-                else
-                {
-                    // normal display
-                    if (GOOD_TICKETS == ticketinfo.Krb4.btickets ||
-                         TICKETS_LOW == ticketinfo.Krb4.btickets)
-                    {
-                        if ( m_ticketTimeLeft >= 60 ) {
-                            ticketStatusKrb4.Format("Kerb-4 Ticket Life: %02d:%02d",
-                                                     (m_ticketTimeLeft / 60L / 60L),
-                                                     (m_ticketTimeLeft / 60L % 60L));
-                        } else {
-                            ticketStatusKrb4.Format("Kerb-4 Ticket Life: < 1 min");
-                        }
-                    }
-
-                    if (CMainFrame::m_wndStatusBar)
-                    {
-                        CMainFrame::m_wndStatusBar.SetPaneInfo(2, 111111, SBPS_NORMAL, 130);
-                        CMainFrame::m_wndStatusBar.SetPaneText(2, ticketStatusKrb4, SBT_POPOUT);
-                    }
-                }
-            }
-            else
-            {
-#endif
-////Should this be removed altogether?
-                // not installed
-                ticketStatusKrb4.Format("Kerb-4: Not Available");
-
-                if (CMainFrame::m_wndStatusBar)
-                {
-                    CMainFrame::m_wndStatusBar.SetPaneInfo(2, 111111, SBPS_NORMAL, 130);
-                    CMainFrame::m_wndStatusBar.SetPaneText(2, ticketStatusKrb4, SBT_POPOUT);
-                }
-#ifndef NO_KRB4
-            }
-            // KRB4
-#endif
 
             if (CLeashApp::m_hAfsDLL)
             {
@@ -2336,8 +2471,8 @@ BOOL CLeashView::PreTranslateMessage(MSG* pMsg)
                          EXPIRED_TICKETS != ticketinfo.Krb5.btickets &&
                          m_autoRenewTickets &&
                          !m_autoRenewalAttempted &&
-                         ticketinfo.Krb5.renew_till &&
-                         (ticketinfo.Krb5.issue_date + ticketinfo.Krb5.renew_till -LeashTime() > 20 * 60) &&
+                         ticketinfo.Krb5.renew_until &&
+                         (ticketinfo.Krb5.issued + ticketinfo.Krb5.renew_until -LeashTime() > 20 * 60) &&
                          !stricmp(ticketinfo.Krb5.principal,ticketinfo.Afs.principal)
                          )
                     {
@@ -2411,34 +2546,21 @@ BOOL CLeashView::PreTranslateMessage(MSG* pMsg)
                             ticketStatusAfs.Format("AFS Token Life: < 1 min");
                         }
                     }
-
+#ifndef NO_STATUS_BAR
                     if (CMainFrame::m_wndStatusBar)
                     {
                         CMainFrame::m_wndStatusBar.SetPaneInfo(3, 111113, SBPS_NORMAL, 130);
                         CMainFrame::m_wndStatusBar.SetPaneText(3, ticketStatusAfs, SBT_POPOUT);
                     }
+#endif
                 }
             }
-#ifdef COMMENT
-            // we do not set this field because the field does not exist when AfsDLL is NULL
-            else
-            {
-                // not installed
-                ticketStatusAfs.Format("AFS: Not Available");
-
-                if (CMainFrame::m_wndStatusBar)
-                {
-                    CMainFrame::m_wndStatusBar.SetPaneInfo(3, 111113, SBPS_NORMAL, 130);
-                    CMainFrame::m_wndStatusBar.SetPaneText(3, ticketStatusAfs, SBT_POPOUT);
-                }
-            }
-#endif /* COMMENT */
             // AFS
 
 #ifndef NO_KRB5
             if ( m_ticketStatusKrb5 == TWENTY_MINUTES_LEFT &&
-                 m_autoRenewTickets && !m_autoRenewalAttempted && ticketinfo.Krb5.renew_till &&
-                 (ticketinfo.Krb5.issue_date + ticketinfo.Krb5.renew_till - LeashTime() > 20 * 60))
+                 m_autoRenewTickets && !m_autoRenewalAttempted && ticketinfo.Krb5.renew_until &&
+                 (ticketinfo.Krb5.renew_until - LeashTime() > 20 * 60))
             {
                 m_autoRenewalAttempted = 1;
                 ReleaseMutex(ticketinfo.lockObj);
@@ -2450,15 +2572,12 @@ BOOL CLeashView::PreTranslateMessage(MSG* pMsg)
             BOOL warningKrb5 = m_ticketStatusKrb5 > NO_TICKETS &&
                 m_ticketStatusKrb5 < TWENTY_MINUTES_LEFT &&
                     !m_warningOfTicketTimeLeftKrb5;
-            BOOL warningKrb4 = m_ticketStatusKrb4 > NO_TICKETS &&
-                m_ticketStatusKrb4 < TWENTY_MINUTES_LEFT &&
-                    !m_warningOfTicketTimeLeftKrb4;
             BOOL warningAfs = m_ticketStatusAfs > NO_TICKETS &&
                 m_ticketStatusAfs < TWENTY_MINUTES_LEFT &&
                     !m_warningOfTicketTimeLeftAfs;
 
             // Play warning message only once per each case statement above
-            if (warningKrb4 || warningKrb5 || warningAfs)
+            if (warningKrb5 || warningAfs)
             {
 
                 CString lowTicketWarning = "";
@@ -2467,13 +2586,6 @@ BOOL CLeashView::PreTranslateMessage(MSG* pMsg)
                 if (warningKrb5) {
                     lowTicketWarning += lowTicketWarningKrb5;
                     m_warningOfTicketTimeLeftKrb5 = ON;
-                    warnings++;
-                }
-                if (warningKrb4) {
-                    if ( warnings )
-                        lowTicketWarning += "\n";
-                    lowTicketWarning += lowTicketWarningKrb4;
-                    m_warningOfTicketTimeLeftKrb4 = ON;
                     warnings++;
                 }
                 if (warningAfs) {
@@ -2496,22 +2608,20 @@ BOOL CLeashView::PreTranslateMessage(MSG* pMsg)
             if (CMainFrame::m_isMinimum)
             {
                 if ( CLeashApp::m_hAfsDLL )
-                    strTimeDate = ( "Leash - "
+                    strTimeDate = ( "MIT Kerberos - "
                                     "[" + ticketStatusKrb5 + "] - " +
-                                    "[" + ticketStatusKrb4 + "] - " +
                                     "[" + ticketStatusAfs + "] - " +
                                     "[" + ticketinfo.Krb5.principal + "]" + " - " +
                                     tTimeDate.Format("%A, %B %d, %Y  %H:%M "));
                 else
-                    strTimeDate = ( "Leash - "
+                    strTimeDate = ( "MIT Kerberos - "
                                     "[" + ticketStatusKrb5 + "] - " +
-                                    "[" + ticketStatusKrb4 + "] - " +
                                     "[" + ticketinfo.Krb5.principal + "]" + " - " +
                                     tTimeDate.Format("%A, %B %d, %Y  %H:%M "));
             }
             else
             {
-                strTimeDate = ("Leash - " +
+                strTimeDate = ("MIT Kerberos - " +
                                 tTimeDate.Format("%A, %B %d, %Y  %H:%M ")
                                 //timeDate.Format("%d %b %y %H:%M:%S - ")
                                 );
@@ -2520,18 +2630,11 @@ BOOL CLeashView::PreTranslateMessage(MSG* pMsg)
 
             if (CLeashApp::m_hKrb5DLL) {
                 if ( ticketinfo.Krb5.btickets )
-                    strTimeDate = ( "Leash: "
+                    strTimeDate = ( "MIT Kerberos: "
                                     "[" + ticketStatusKrb5 + "]" +
                                     " - [" + ticketinfo.Krb5.principal + "]");
                 else
-                    strTimeDate = "Leash: Kerb-5 No Tickets";
-            } else {
-                if ( ticketinfo.Krb4.btickets )
-                    strTimeDate = ( "Leash: "
-                                    "[" + ticketStatusKrb4 + "]" +
-                                    " - [" + ticketinfo.Krb4.principal + "]");
-                else
-                    strTimeDate = "Leash: Kerb-4 No Tickets";
+                    strTimeDate = "MIT Kerberos: No Tickets";
             }
             ReleaseMutex(ticketinfo.lockObj);
 
@@ -2560,247 +2663,68 @@ BOOL CLeashView::PreTranslateMessage(MSG* pMsg)
 
     if (CMainFrame::m_isBeingResized)
     {
-        WINDOWPLACEMENT headingWndpl;
-        headingWndpl.length = sizeof(WINDOWPLACEMENT);
-
-        CWnd *heading = GetDlgItem(IDC_LABEL_KERB_TICKETS);
-        if (!heading->GetWindowPlacement(&headingWndpl))
-        {
-            AfxMessageBox("There is a problem getting Leash Heading size!",
-                       MB_OK|MB_ICONSTOP);
-            return CFormView::PreTranslateMessage(pMsg);;
-         }
-
-        m_pTree = (CTreeCtrl*) GetDlgItem(IDC_TREEVIEW);
-        VERIFY(m_pTree);
-        if (!m_pTree)
-        {
-            AfxMessageBox("There is a problem finding the Ticket Tree!",
-                       MB_OK|MB_ICONSTOP);
-            return CFormView::PreTranslateMessage(pMsg);
-        }
-
-        CRect rect;
-        GetClientRect(&rect);
-
-        WINDOWPLACEMENT wndpl;
-        wndpl.length = sizeof(WINDOWPLACEMENT);
-
-        if (!GetWindowPlacement(&wndpl))
-        {
-            AfxMessageBox("There is a problem getting Leash Window size!",
-                       MB_OK|MB_ICONSTOP);
-            return CFormView::PreTranslateMessage(pMsg);
-        }
-
-
-        wndpl.rcNormalPosition.top = rect.top + headingWndpl.rcNormalPosition.bottom;
-        wndpl.rcNormalPosition.right = rect.right;
-        wndpl.rcNormalPosition.bottom = rect.bottom;
-
         m_startup = FALSE;
 
-        if (!m_pTree->SetWindowPlacement(&wndpl))
-        {
-            AfxMessageBox("There is a problem setting Leash ticket Tree size!",
-                       MB_OK|MB_ICONSTOP);
-        }
-
-
         UpdateWindow();
-
-#ifdef COOL_SCROLL
-        // The follow code creates a cool scroll bar on the MainFrame
-           m_pTree = (CTreeCtrl*) GetDlgItem(IDC_TREEVIEW);
-           CWnd *pLabel = GetDlgItem(IDC_LABEL_KERB_TICKETS);
-
-           VERIFY(m_pTree);
-
-           // Sync Tree Frame with Main Frame
-           // WINDOWPLACEMENT wndpl;
-           WINDOWPLACEMENT wndplTree;
-           WINDOWPLACEMENT wndplLabel;
-           wndpl.length = sizeof(WINDOWPLACEMENT);
-           wndplTree.length = sizeof(WINDOWPLACEMENT);
-           wndplLabel.length = sizeof(WINDOWPLACEMENT);
-           GetWindowPlacement(&wndpl);
-           m_pTree->GetWindowPlacement(&wndplTree);
-           pLabel->GetWindowPlacement(&wndplLabel);
-
-           if (!m_startup)
-           {
-           if (ticketinfo.Krb4.btickets || ticketinfo.Krb5.btickets)
-           { // control scroll bars to TreeView
-           #define TICKET_LABEL_TOP 8
-           #define TICKET_LABEL_BOTTOM 28
-           #define TICKET_LABEL_RIGHT 398
-           #define RIGHT_FRAME_ADJUSTMENT 13
-           #define BOTTOM_FRAME_ADJUSTMENT 72
-           #define STRETCH_FACTOR 3
-
-           char theText[MAX_K_NAME_SZ+40];
-           int longestLine = 0;
-           int theHeight = 0;
-           BOOL disableScrollHorz = FALSE;
-           BOOL disableScrollVert = FALSE;
-           RECT rect;
-
-           HTREEITEM  xTree;
-           TV_ITEM item;
-           item.mask = TVIF_HANDLE | TVIF_TEXT;
-           item.cchTextMax = sizeof(theText);
-
-           xTree = m_hKerb4;
-           do
-           {
-           item.hItem = xTree;
-           item.pszText = theText;
-           VERIFY(m_pTree->GetItem(&item));
-
-           UINT offSet = m_pTree->GetIndent();
-           if (!m_pTree->GetItemRect(xTree, &rect, TRUE))
-           {
-           longestLine = 0;
-           theHeight = 0;
-           break;
-           }
-
-           if (rect.right > longestLine)
-           longestLine = rect.right + RIGHT_FRAME_ADJUSTMENT;
-
-           theHeight = rect.bottom + BOTTOM_FRAME_ADJUSTMENT;
-           }
-           while ((xTree = m_pTree->GetNextItem(xTree, TVGN_NEXTVISIBLE)));
-
-
-           // Horz
-           if (longestLine < wndpl.rcNormalPosition.right)
-           { // disable scroll
-           disableScrollHorz = TRUE;
-           SetScrollPos(SB_HORZ, 0, TRUE);
-           EnableScrollBar(SB_HORZ, ESB_DISABLE_BOTH);
-           }
-           else
-           { // enable scroll
-           EnableScrollBar(SB_HORZ, ESB_ENABLE_BOTH);
-           SetScrollRange(SB_HORZ, 0, longestLine , TRUE);
-           }
-
-           // Vert
-           if (theHeight < wndpl.rcNormalPosition.bottom)
-           { // disable scroll
-           disableScrollVert = TRUE;
-           SetScrollPos(SB_VERT, 0, TRUE);
-           EnableScrollBar(SB_VERT, ESB_DISABLE_BOTH);
-           }
-           else
-           { // enable scroll
-           EnableScrollBar(SB_VERT, ESB_ENABLE_BOTH);
-           SetScrollRange(SB_VERT, 0, theHeight, TRUE);
-           }
-
-
-           if (!disableScrollHorz)
-           {
-           wndpl.rcNormalPosition.left =
-           wndplTree.rcNormalPosition.left;
-
-           wndplLabel.rcNormalPosition.left =
-           wndpl.rcNormalPosition.left + 8;
-           }
-
-           if (!disableScrollVert)
-           {
-           wndpl.rcNormalPosition.top =
-           wndplTree.rcNormalPosition.top;
-           }
-           else
-           {
-           wndplLabel.rcNormalPosition.left =
-           wndpl.rcNormalPosition.left + 8;
-
-           wndplLabel.rcNormalPosition.top = TICKET_LABEL_TOP;
-           wndplLabel.rcNormalPosition.bottom = TICKET_LABEL_BOTTOM;
-           wndplLabel.rcNormalPosition.right = TICKET_LABEL_RIGHT;
-           }
-
-           wndpl.rcNormalPosition.right *= STRETCH_FACTOR;
-           wndpl.rcNormalPosition.bottom *= STRETCH_FACTOR;
-           }
-           }
-
-           m_startup = FALSE;
-
-           m_pTree->SetWindowPlacement(&wndpl);
-           pLabel->SetWindowPlacement(&wndplLabel);
-#endif /* COOL_SCROLL */
 
         CMainFrame::m_isBeingResized = FALSE;
     }
 
 	if (::IsWindow(pMsg->hwnd))
-		return CFormView::PreTranslateMessage(pMsg);
+		return CListView::PreTranslateMessage(pMsg);
 	else
 		return FALSE;
 }
 
 VOID CLeashView::OnLowTicketAlarm()
 {
-    if (m_lowTicketAlarm%2 == 0)
-        m_lowTicketAlarm = ON;
-    else
-        m_lowTicketAlarm = OFF;
+    m_lowTicketAlarm = !m_lowTicketAlarm;
 
+    if (m_pApp)
+        m_pApp->WriteProfileInt("Settings", "LowTicketAlarm", m_lowTicketAlarm);
+}
 
-    if (!m_pApp)
-    {
-        ApplicationInfoMissingMsg();
-    }
-    else if (!m_lowTicketAlarm)
-    {
-        if (m_hMenu)
-            CheckMenuItem(m_hMenu, ID_LOW_TICKET_ALARM, MF_UNCHECKED);
-
-        m_pApp->WriteProfileInt("Settings", "LowTicketAlarm", FALSE_FLAG);
-    }
-    else
-    {
-        if (m_hMenu)
-            CheckMenuItem(m_hMenu, ID_LOW_TICKET_ALARM, MF_CHECKED);
-
-        m_pApp->WriteProfileInt("Settings", "LowTicketAlarm", TRUE_FLAG);
-    }
+VOID CLeashView::OnUpdateLowTicketAlarm(CCmdUI* pCmdUI)
+{
+    pCmdUI->SetCheck(m_lowTicketAlarm);
 }
 
 VOID CLeashView::OnAutoRenew()
 {
-    if (m_autoRenewTickets%2 == 0)
-        m_autoRenewTickets = ON;
-    else
-        m_autoRenewTickets = OFF;
+    m_autoRenewTickets = !m_autoRenewTickets;
 
+    if (m_pApp)
+        m_pApp->WriteProfileInt("Settings", "AutoRenewTickets", m_autoRenewTickets);
 
-    if (!m_pApp)
-    {
-        ApplicationInfoMissingMsg();
-    }
-    else if (!m_autoRenewTickets)
-    {
-        if (m_hMenu)
-            CheckMenuItem(m_hMenu, ID_AUTO_RENEW, MF_UNCHECKED);
-
-        m_pApp->WriteProfileInt("Settings", "AutoRenewTickets", FALSE_FLAG);
-        m_autoRenewTickets = FALSE;
-    }
-    else
-    {
-        if (m_hMenu)
-            CheckMenuItem(m_hMenu, ID_AUTO_RENEW, MF_CHECKED);
-
-        m_pApp->WriteProfileInt("Settings", "AutoRenewTickets", TRUE_FLAG);
-        m_autoRenewTickets = TRUE;
-    }
     m_autoRenewalAttempted = 0;
+}
+
+VOID CLeashView::OnUpdateAutoRenew(CCmdUI* pCmdUI)
+{
+    pCmdUI->SetCheck(m_autoRenewTickets);
+}
+
+VOID CLeashView::OnUpdateMakeDefault(CCmdUI* pCmdUI)
+{
+    // enable if exactly one principal is selected and that principal is not
+    // the default principal
+    BOOL enable = FALSE;
+    CCacheDisplayData *elem = m_ccacheDisplay;
+    while (elem != NULL) {
+        if (elem->m_selected) {
+            if (enable) {
+                // multiple selection; disable button
+                enable = FALSE;
+                break;
+            }
+            if (elem->m_isDefault)
+                break;
+
+            enable = TRUE;
+        }
+        elem = elem->m_next;
+    }
+    pCmdUI->Enable(enable);
 }
 
 VOID CLeashView::AlarmBeep()
@@ -2896,7 +2820,7 @@ LRESULT
 CLeashView::OnObtainTGTWithParam(WPARAM wParam, LPARAM lParam)
 {
     LRESULT res = 0;
-    char * param = (char *) GlobalLock((HGLOBAL) lParam);
+    char *param = 0;
     LSH_DLGINFO_EX ldi;
     ldi.size = sizeof(ldi);
     ldi.dlgtype = DLGTYPE_PASSWD;
@@ -2904,24 +2828,195 @@ CLeashView::OnObtainTGTWithParam(WPARAM wParam, LPARAM lParam)
     ldi.title = ldi.in.title;
     ldi.username = ldi.in.username;
     ldi.realm = ldi.in.realm;
+
+    if (lParam)
+        param = (char *) MapViewOfFile((HANDLE)lParam,
+                                       FILE_MAP_ALL_ACCESS,
+                                       0,
+                                       0,
+                                       4096);
+
     if ( param ) {
         if ( *param )
-            strcpy(ldi.in.title,param);
+            strcpy_s(ldi.in.title,param);
         param += strlen(param) + 1;
         if ( *param )
-            strcpy(ldi.in.username,param);
+            strcpy_s(ldi.in.username,param);
         param += strlen(param) + 1;
         if ( *param )
-            strcpy(ldi.in.realm,param);
+            strcpy_s(ldi.in.realm,param);
         param += strlen(param) + 1;
 	if ( *param )
-	    strcpy(ldi.in.ccache,param);
+	    strcpy_s(ldi.in.ccache,param);
     } else {
-        strcpy(ldi.in.title,"Initialize Ticket");
+        strcpy_s(ldi.in.title, "MIT Kerberos: Get Ticket");
     }
 
+    if (strlen(ldi.username) > 0 && strlen(ldi.realm) > 0)
+        ldi.dlgtype |= DLGFLAG_READONLYPRINC;
+
     res = pLeash_kinit_dlg_ex(m_hWnd, &ldi);
-    GlobalUnlock((HGLOBAL) lParam);
+    if (param)
+        UnmapViewOfFile(param);
+    if (lParam)
+        CloseHandle((HANDLE )lParam);
     ::SendMessage(m_hWnd, WM_COMMAND, ID_UPDATE_DISPLAY, 0);
     return res;
+}
+
+
+// Find the CCacheDisplayData corresponding to the specified item, if it exists
+static CCacheDisplayData *
+FindCCacheDisplayData(int item, CCacheDisplayData *elem)
+{
+    while (elem != NULL) {
+        if (elem->m_index == item)
+            break;
+        elem = elem->m_next;
+    }
+    return elem;
+}
+
+
+void CLeashView::OnLvnItemActivate(NMHDR *pNMHDR, LRESULT *pResult)
+{
+    LPNMITEMACTIVATE pNMIA = reinterpret_cast<LPNMITEMACTIVATE>(pNMHDR);
+    // TODO: Add your control notification handler code here
+    CCacheDisplayData *elem = FindCCacheDisplayData(pNMIA->iItem,
+                                                    m_ccacheDisplay);
+    if (elem != NULL) {
+        elem->m_expanded = !elem->m_expanded;
+        OnUpdateDisplay();
+    }
+    *pResult = 0;
+}
+
+
+void CLeashView::OnLvnKeydown(NMHDR *pNMHDR, LRESULT *pResult)
+{
+    LPNMLVKEYDOWN pLVKeyDow = reinterpret_cast<LPNMLVKEYDOWN>(pNMHDR);
+    int expand = -1; // -1 = unchanged; 0 = collapse; 1 = expand
+    switch (pLVKeyDow->wVKey) {
+    case VK_RIGHT:
+        // expand focus item
+        expand = 1;
+        break;
+    case VK_LEFT:
+        // collapse focus item
+        expand = 0;
+        break;
+    default:
+        break;
+    }
+    if (expand >= 0) {
+        int focusedItem = GetListCtrl().GetNextItem(-1, LVNI_FOCUSED);
+        if (focusedItem >= 0) {
+            CCacheDisplayData *elem = FindCCacheDisplayData(focusedItem,
+                                                            m_ccacheDisplay);
+            if (elem != NULL) {
+                if (elem->m_expanded != expand) {
+                    elem->m_expanded = expand;
+                    OnUpdateDisplay();
+                }
+            }
+        }
+    }
+    *pResult = 0;
+}
+
+void CLeashView::OnLvnItemchanging(NMHDR *pNMHDR, LRESULT *pResult)
+{
+    CCacheDisplayData *elem;
+    LRESULT result = 0;
+    LPNMLISTVIEW pNMLV = reinterpret_cast<LPNMLISTVIEW>(pNMHDR);
+    // TODO: Add your control notification handler code here
+    if ((pNMLV->uNewState ^ pNMLV->uOldState) & LVIS_SELECTED) {
+        // selection state changing
+        elem = FindCCacheDisplayData(pNMLV->iItem, m_ccacheDisplay);
+        if (elem == NULL) {
+            // this is an individual ticket, not a cache, so prevent selection
+            if (pNMLV->uNewState & LVIS_SELECTED) {
+                unsigned int newState =  pNMLV->uNewState & ~LVIS_SELECTED;
+                result = 1; // suppress changes
+                if (newState != pNMLV->uOldState) {
+                    // but need to make other remaining changes still
+                    GetListCtrl().SetItemState(pNMLV->iItem, newState,
+                                               newState ^ pNMLV->uOldState);
+                }
+            }
+        } else {
+            elem->m_selected = (pNMLV->uNewState & LVIS_SELECTED) ? 1 : 0;
+        }
+    }
+    *pResult = result;
+}
+
+HFONT CLeashView::GetSubItemFont(int iItem, int iSubItem)
+{
+    HFONT retval = m_BaseFont;
+    int iColumn, columnSubItem = 0;
+
+    // Translate subitem to column index
+    for (iColumn = 0; iColumn < NUM_VIEW_COLUMNS; iColumn++) {
+        if (sm_viewColumns[iColumn].m_enabled) {
+            if (columnSubItem == iSubItem)
+                break;
+            else
+                columnSubItem++;
+        }
+    }
+    switch (iColumn) {
+    case RENEWABLE_UNTIL:
+    case VALID_UNTIL:
+        retval = m_aListItemInfo[iItem].m_durationFont;
+        break;
+    default:
+        retval = m_aListItemInfo[iItem].m_font;
+        break;
+    }
+    return retval;
+}
+
+void CLeashView::OnNMCustomdraw(NMHDR *pNMHDR, LRESULT *pResult)
+{
+    HFONT font;
+    CCacheDisplayData *pElem;
+    *pResult = CDRF_DODEFAULT;
+    int iItem;
+
+    LPNMLVCUSTOMDRAW pNMLVCD = reinterpret_cast<LPNMLVCUSTOMDRAW>(pNMHDR);
+    switch (pNMLVCD->nmcd.dwDrawStage) {
+    case CDDS_PREPAINT:
+        *pResult = CDRF_NOTIFYITEMDRAW;
+        break;
+    case CDDS_ITEMPREPAINT:
+        *pResult = CDRF_NOTIFYSUBITEMDRAW;
+        break;
+    case CDDS_SUBITEM | CDDS_ITEMPREPAINT:
+        iItem = pNMLVCD->nmcd.dwItemSpec;
+        pElem = FindCCacheDisplayElem(m_ccacheDisplay, iItem);
+        font = GetSubItemFont(iItem, pNMLVCD->iSubItem);
+        SelectObject(pNMLVCD->nmcd.hdc, font);
+        if (pElem != NULL && pNMLVCD->iSubItem == 0) {
+            CListCtrl &list = GetListCtrl();
+            CRect drawRect, nextRect;
+            if (list.GetSubItemRect(iItem, 0, LVIR_BOUNDS, drawRect)) {
+                HTHEME hTheme = OpenThemeData(pNMLVCD->nmcd.hdr.hwndFrom,
+                                              L"Explorer::TreeView");
+                drawRect.right = drawRect.left +
+                                 (drawRect.bottom - drawRect.top);
+                // @TODO: need hot states, too: TVP_HOTGLYPH, HGLPS_OPENED,
+                //        HGLPS_CLOSED
+                int state = pElem->m_expanded ? GLPS_OPENED : GLPS_CLOSED;
+                DrawThemeBackground(hTheme,
+                                    pNMLVCD->nmcd.hdc,
+                                    TVP_GLYPH, state,
+                                    &drawRect, NULL);
+            }
+        }
+        *pResult = CDRF_NEWFONT;
+        break;
+    default:
+        break;
+    }
 }

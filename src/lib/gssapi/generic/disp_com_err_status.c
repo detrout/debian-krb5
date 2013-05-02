@@ -22,7 +22,7 @@
  */
 
 /*
- * $Id: disp_com_err_status.c 24968 2011-06-13 21:44:51Z ghudson $
+ * $Id$
  */
 
 #include "gssapiP_generic.h"

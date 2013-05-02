@@ -26,7 +26,9 @@ SRCS= \
 	$(srcdir)/policy.c \
 	$(srcdir)/extern.c \
 	$(srcdir)/replay.c \
-	$(srcdir)/kdc_authdata.c
+	$(srcdir)/kdc_authdata.c \
+	$(srcdir)/kdc_transit.c \
+	$(srcdir)/tgs_policy.c
 
 OBJS= \
 	kdc5_err.o \
@@ -42,12 +44,12 @@ OBJS= \
 	policy.o \
 	extern.o \
 	replay.o \
-	kdc_authdata.o
+	kdc_authdata.o \
+	kdc_transit.o \
+	tgs_policy.o
 
 RT_OBJS= rtest.o \
-	kdc_util.o \
-	policy.o \
-	extern.o
+	kdc_transit.o
 
 depend:: kdc5_err.c kdc5_err.h
 
@@ -75,7 +77,6 @@ check-pytests::
 
 install::
 	$(INSTALL_PROGRAM) krb5kdc ${DESTDIR}$(SERVER_BINDIR)/krb5kdc
-	$(INSTALL_DATA) $(srcdir)/krb5kdc.M ${DESTDIR}$(SERVER_MANDIR)/krb5kdc.8
 
 clean::
 	$(RM) kdc5_err.h kdc5_err.c krb5kdc rtest.o rtest

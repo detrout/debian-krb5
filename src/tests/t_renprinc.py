@@ -25,7 +25,7 @@ from k5test import *
 
 enctype = "aes128-cts"
 
-realm = K5Realm(create_host=False, create_user=False, start_kadmind=False)
+realm = K5Realm(create_host=False, create_user=False)
 salttypes = ('normal', 'v4', 'norealm', 'onlyrealm')
 
 # For a variety of salt types, test that we can rename a principal and
@@ -43,4 +43,4 @@ for st in salttypes:
 realm.run_kadminl('renprinc -force newnormal newnormal2')
 realm.kinit('newnormal2', password('normal'))
 
-success('Principal renaming tests.')
+success('Principal renaming tests')

@@ -92,74 +92,64 @@ BEGIN
     CONTROL         "",ID_PICFRAME,"Static",SS_BLACKFRAME,157,27,100,100
 END
 
-IDD_AUTHENTICATE DIALOGEX 0, 0, 370, 268
+IDD_AUTHENTICATE DIALOGEX 0, 0, 370, 248
 STYLE DS_MODALFRAME | DS_3DLOOK | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Authenticate to Kerberos"
 FONT 8, "Microsoft Sans Serif"
 BEGIN
-    EDITTEXT        IDC_EDIT_PRINCIPAL,89,42,259,14,ES_AUTOHSCROLL
-    EDITTEXT        IDC_EDIT_PASSWORD,89,74,259,14,ES_PASSWORD |
+    EDITTEXT        IDC_EDIT_PRINCIPAL,89,42,199,14,ES_AUTOHSCROLL
+    EDITTEXT        IDC_EDIT_PASSWORD,89,58,259,14,ES_PASSWORD |
                     ES_AUTOHSCROLL
-    COMBOBOX        IDC_COMBO_REALM,89,57,259,79,CBS_DROPDOWN |
-                    CBS_AUTOHSCROLL | CBS_SORT | WS_VSCROLL | WS_TABSTOP
-    DEFPUSHBUTTON   "OK",IDOK,302,235,49,14
-    PUSHBUTTON      "Cancel",IDCANCEL,249,235,49,14
-    PUSHBUTTON      "Hide Options",IDC_BUTTON_OPTIONS,186,235,49,14
+    DEFPUSHBUTTON   "OK",IDOK,302,219,49,14
+    PUSHBUTTON      "Cancel",IDCANCEL,249,219,49,14
+    PUSHBUTTON      "Hide Advanced",IDC_BUTTON_OPTIONS,146,219,89,14
+    PUSHBUTTON      "Clear History",IDC_BUTTON_CLEAR_HISTORY,288,42,60,14
+    CONTROL         "Remember this principal", IDC_CHECK_REMEMBER_PRINCIPAL,
+                    "Button", BS_AUTOCHECKBOX | WS_TABSTOP,89,72,100,14
     CONTROL         "Ticket Lifetime",IDC_SLIDER_LIFETIME,"msctls_trackbar32",
-                    TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,90,113,258,15
-    CONTROL         "Get tickets that can be forwarded to other machines",
+                    TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,90,97,258,15
+    CONTROL         "Forwardable and Proxiable (can be forwarded to other machines)",
                     IDC_CHECK_FORWARDABLE,"Button",BS_AUTOCHECKBOX |
-                    WS_TABSTOP,89,150,203,10
-    CONTROL         "Get tickets without IP addresses (NAT mode)",
-                    IDC_CHECK_NOADDRESS,"Button",BS_AUTOCHECKBOX |
-                    WS_TABSTOP,89,163,228,10
-    CONTROL         "Get tickets that can be renewed for:",
+                    WS_TABSTOP,89,123,253,10
+    CONTROL         "Renewable (can be renewed during the renewable lifetime)",
                     IDC_CHECK_RENEWABLE,"Button",BS_AUTOCHECKBOX |
-                    WS_TABSTOP,89,176,186,10
+                    WS_TABSTOP,89,135,253,10
     CONTROL         "Slider2",IDC_SLIDER_RENEWLIFE,"msctls_trackbar32",
-                    TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,100,207,246,15
-    RTEXT           "Name:",IDC_STATIC_NAME,63,44,21,8
-    RTEXT           "Realm:",IDC_STATIC_REALM,62,60,23,8
-    RTEXT           "Password:",IDC_STATIC_PWD,13,76,74,8
-    RTEXT           "Ticket Lifetime:",IDC_STATIC_LIFETIME,19,103,65,8,0,
+                    TBS_BOTH | TBS_NOTICKS | WS_TABSTOP,90,178,258,15
+    RTEXT           "Principal:",IDC_STATIC_NAME,13,44,74,8
+    RTEXT           "Password:",IDC_STATIC_PWD,13,60,74,8
+    RTEXT           "Ticket Lifetime:",IDC_STATIC_LIFETIME,23,87,65,8,0,
                     WS_EX_RIGHT
-    LTEXT           "Kerberos 5 Options:",IDC_STATIC_KRB5,22,139,101,8
-    LTEXT           "HMS",IDC_STATIC_LIFETIME_VALUE,89,103,131,8
-    LTEXT           "HMS",IDC_STATIC_RENEW_TILL_VALUE,102,193,141,8
-    LTEXT           "",IDC_STATIC_VERSION,7,244,143,8
+    LTEXT           "Flag this ticket as:",IDC_STATIC_KRB5,32,123,56,8
+    LTEXT           "HMS",IDC_STATIC_LIFETIME_VALUE,90,87,131,8
+    LTEXT           "HMS",IDC_STATIC_RENEW_TILL_VALUE,90,164,141,8
     ICON            LEASHICON,IDC_PICTURE_LEASH,21,15,20,20
-    LTEXT           "You are required to type your Kerberos Password",
+    LTEXT           "Please Authenticate",
                     IDC_STATIC_NOTICE,51,23,276,8
-    RTEXT           "Renew Till:",IDC_STATIC_RENEW,37,193,59,8
-    LTEXT           "",IDC_STATIC_COPYRIGHT,7,256,323,8
+    RTEXT           "Renewable Lifetime:",IDC_STATIC_RENEW,10,164,79,8
 END
 
-IDD_PASSWORD DIALOG DISCARDABLE  0, 0, 382, 198
+IDD_PASSWORD DIALOG DISCARDABLE  0, 0, 382, 150
 STYLE DS_MODALFRAME | DS_3DLOOK | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "Change Password"
 FONT 8, "Microsoft Sans Serif"
 BEGIN
-    EDITTEXT        IDC_EDIT_PRINCIPAL,99,52,259,14,ES_AUTOHSCROLL
-    EDITTEXT        IDC_EDIT_PASSWORD,99,84,259,14,ES_PASSWORD |
+    EDITTEXT        IDC_EDIT_PRINCIPAL,99,40,259,14,ES_AUTOHSCROLL
+    EDITTEXT        IDC_EDIT_PASSWORD,99,60,259,14,ES_PASSWORD |
                     ES_AUTOHSCROLL
-    EDITTEXT        IDC_EDIT_PASSWORD2,99,112,259,14,ES_PASSWORD |
+    EDITTEXT        IDC_EDIT_PASSWORD2,99,85,259,14,ES_PASSWORD |
                     ES_AUTOHSCROLL
-    EDITTEXT        IDC_EDIT_PASSWORD3,99,135,259,14,ES_PASSWORD |
+    EDITTEXT        IDC_EDIT_PASSWORD3,99,105,259,14,ES_PASSWORD |
                     ES_AUTOHSCROLL
-    COMBOBOX        IDC_COMBO_REALM,99,67,259,79,CBS_DROPDOWN |
-                    CBS_AUTOHSCROLL | CBS_SORT | WS_VSCROLL | WS_TABSTOP
-    DEFPUSHBUTTON   "OK",IDOK,313,165,49,14
-    PUSHBUTTON      "Cancel",IDCANCEL,256,165,49,14
-    RTEXT           "Name:",IDC_STATIC_NAME,73,55,21,8
-    RTEXT           "Realm:",IDC_STATIC_REALM,72,71,23,8
-    RTEXT           "Old Password:",IDC_STATIC_PWD,19,85,74,21
-    LTEXT           "Copyright 2003 MIT",IDC_STATIC_COPYRIGHT,7,183,329,8
+    DEFPUSHBUTTON   "OK",IDOK,313,125,49,14
+    PUSHBUTTON      "Cancel",IDCANCEL,256,125,49,14
+    RTEXT           "Principal:",IDC_STATIC_NAME,22,43,74,12
+    RTEXT           "Old Password:",IDC_STATIC_PWD,22,63,74,12
     ICON            LEASHICON,IDC_PICTURE_LEASH,15,15,20,20
     LTEXT           "Change your Kerberos password or phrase",
                     IDC_STATIC_NOTICE,48,20,276,8
-    RTEXT           "New Password:",IDC_STATIC_PWD2,23,112,74,16
-    RTEXT           "New Password (again):",IDC_STATIC_PWD3,22,135,74,18
-    LTEXT           "Version",IDC_STATIC_VERSION,7,170,172,8
+    RTEXT           "New Password:",IDC_STATIC_PWD2,22,88,74,12
+    RTEXT           "New Password (again):",IDC_STATIC_PWD3,22,108,74,12
 END
 
 

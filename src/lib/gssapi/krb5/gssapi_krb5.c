@@ -75,7 +75,7 @@
  */
 
 /*
- * $Id: gssapi_krb5.c 25332 2011-10-14 14:40:10Z hartmans $
+ * $Id$
  */
 
 
@@ -897,14 +897,11 @@ static struct gss_config krb5_mechanism = {
     krb5_gss_inquire_saslname_for_mech,
     krb5_gss_inquire_mech_for_saslname,
     krb5_gss_inquire_attrs_for_mech,
-};
-
-static struct gss_config_ext krb5_mechanism_ext = {
+    krb5_gss_acquire_cred_from,
+    krb5_gss_store_cred_into,
     krb5_gss_acquire_cred_with_password,
-};
-
-static struct gss_config_ext iakerb_mechanism_ext = {
-    iakerb_gss_acquire_cred_with_password,
+    krb5_gss_export_cred,
+    krb5_gss_import_cred,
 };
 
 #ifdef _GSS_STATIC_LINK
@@ -919,10 +916,11 @@ static int gss_iakerbmechglue_init(void)
     iakerb_mechanism.gss_init_sec_context   = iakerb_gss_init_sec_context;
     iakerb_mechanism.gss_delete_sec_context = iakerb_gss_delete_sec_context;
     iakerb_mechanism.gss_acquire_cred       = iakerb_gss_acquire_cred;
+    iakerb_mechanism.gssspi_acquire_cred_with_password
+                                    = iakerb_gss_acquire_cred_with_password;
 
     memset(&mech_iakerb, 0, sizeof(mech_iakerb));
     mech_iakerb.mech = &iakerb_mechanism;
-    mech_iakerb.mech_ext = &iakerb_mechanism_ext;
 
     mech_iakerb.mechNameStr = "iakerb";
     mech_iakerb.mech_type = (gss_OID)gss_mech_iakerb;
@@ -937,7 +935,6 @@ static int gss_krb5mechglue_init(void)
 
     memset(&mech_krb5, 0, sizeof(mech_krb5));
     mech_krb5.mech = &krb5_mechanism;
-    mech_krb5.mech_ext = &krb5_mechanism_ext;
 
     mech_krb5.mechNameStr = "kerberos_v5";
     mech_krb5.mech_type = (gss_OID)gss_mech_krb5;
@@ -1026,6 +1023,7 @@ void gss_krb5int_lib_fini(void)
 
     k5_key_delete(K5_KEY_GSS_KRB5_SET_CCACHE_OLD_NAME);
     k5_key_delete(K5_KEY_GSS_KRB5_CCACHE_NAME);
+    k5_key_delete(K5_KEY_GSS_KRB5_ERROR_MESSAGE);
     k5_mutex_destroy(&kg_vdb.mutex);
 #ifndef _WIN32
     k5_mutex_destroy(&kg_kdc_flag_mutex);

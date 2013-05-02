@@ -358,6 +358,7 @@ gss_name_t	*internal_name;
 {
     OM_uint32		status, tmpMinor;
     gss_mechanism	mech;
+    gss_OID		public_mech;
 
     mech = gssint_get_mechanism (mech_type);
     if (mech == NULL)
@@ -375,18 +376,25 @@ gss_name_t	*internal_name;
 					  union_name->mech_name,
 					  internal_name);
 	if (status != GSS_S_UNAVAILABLE) {
-	    map_error(minor_status, mech);
+	    if (status != GSS_S_COMPLETE)
+		map_error(minor_status, mech);
 	    return (status);
 	}
     }
 
-    if (mech->gss_import_name == NULL)
+    if (mech->gssspi_import_name_by_mech) {
+	public_mech = gssint_get_public_oid(mech_type);
+	status = mech->gssspi_import_name_by_mech(minor_status, public_mech,
+						  union_name->external_name,
+						  union_name->name_type,
+						  internal_name);
+    } else if (mech->gss_import_name) {
+	status = mech->gss_import_name(minor_status, union_name->external_name,
+				       union_name->name_type, internal_name);
+    } else {
 	return (GSS_S_UNAVAILABLE);
+    }
 
-    status = mech->gss_import_name(minor_status,
-				   union_name->external_name,
-				   union_name->name_type,
-				   internal_name);
     if (status == GSS_S_COMPLETE) {
         /* Attempt to round-trip attributes */
 	(void) import_internal_attributes(&tmpMinor, mech,
@@ -471,7 +479,7 @@ OM_uint32 gssint_export_internal_name(minor_status, mech_type,
 	mechOidTagLen + mechOidDERLen +
 	mech_type->length +
 	nameLenLen + dispName.length;
-    if ((name_buf->value = (void*)malloc(name_buf->length)) ==
+    if ((name_buf->value = (void*)gssalloc_malloc(name_buf->length)) ==
 	(void*)NULL) {
 	name_buf->length = 0;
 	(void) gss_release_buffer(&status, &dispName);

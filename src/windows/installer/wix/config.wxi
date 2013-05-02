@@ -52,18 +52,32 @@
     <?endif?>
     
     <?define KfwRegRoot="SOFTWARE\MIT\Kerberos"?>
+    <?define KfwRegWow6432Root="SOFTWARE\Wow6432Node\MIT\Kerberos"?>
 
     <?define DocDir="$(var.TargetDir)doc\"?>
     <?define IncDir="$(var.TargetDir)include\"?>
     <?define SrcDir="$(var.TargetDir)"?>
     <?define InstallDir="$(var.TargetDir)windows\installer\"?>
     <?define SampleDir="$(var.TargetDir)sample\"?>
-    <?define ConfigDir=".\"?>
+    <?ifdef env.MIT_INTERNAL?>
+      <?define ConfigDir=".\athena\"?>
+    <?else?>
+      <?define ConfigDir=".\"?>
+    <?endif?>
+
     <?define SystemDir="$(env.SystemRoot)\System32\"?>
 
     <?include lang\config_$(var.BuildLang).wxi?>
     
     <!-- Parameters for the features containing debug symbols -->
+    <?ifdef env.NODEBUG?>
+         <?ifdef env.DEBUG_SYMBOL?>
+              <?define DebugSyms?>
+         <?endif?>
+    <?else?>
+         <?define Debug?>
+         <?define DebugSyms?>
+    <?endif?>
     <?ifdef DebugSyms?>
          <?ifdef Debug?>
              <?define DebugSymInstallDefault="followParent"?>

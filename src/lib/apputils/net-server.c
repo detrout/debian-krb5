@@ -58,10 +58,6 @@
 
 #include "fake-addrinfo.h"
 #include "net-server.h"
-#ifdef INTERNAL_VERTO
-#include "verto-k5ev.h"
-#endif
-
 #include <signal.h>
 
 /* XXX */
@@ -78,11 +74,9 @@ set_sa_port(struct sockaddr *addr, int port)
     case AF_INET:
         sa2sin(addr)->sin_port = port;
         break;
-#ifdef KRB5_USE_INET6
     case AF_INET6:
         sa2sin6(addr)->sin6_port = port;
         break;
-#endif
     default:
         break;
     }
@@ -91,7 +85,6 @@ set_sa_port(struct sockaddr *addr, int port)
 static int
 ipv6_enabled()
 {
-#ifdef KRB5_USE_INET6
     static int result = -1;
     if (result == -1) {
         int s;
@@ -103,9 +96,6 @@ ipv6_enabled()
             result = 0;
     }
     return result;
-#else
-    return 0;
-#endif
 }
 
 static int
@@ -114,7 +104,7 @@ setreuseaddr(int sock, int value)
     return setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &value, sizeof(value));
 }
 
-#if defined(KRB5_USE_INET6) && defined(IPV6_V6ONLY)
+#if defined(IPV6_V6ONLY)
 static int
 setv6only(int sock, int value)
 {
@@ -275,12 +265,7 @@ loop_init(verto_ev_type types)
     types |= VERTO_EV_TYPE_IO;
     types |= VERTO_EV_TYPE_SIGNAL;
     types |= VERTO_EV_TYPE_TIMEOUT;
-
-#ifdef INTERNAL_VERTO
-    return verto_default_k5ev();
-#else
     return verto_default(NULL, types);
-#endif
 }
 
 static void
@@ -292,7 +277,7 @@ do_break(verto_ctx *ctx, verto_ev *ev)
 
 struct sighup_context {
     void *handle;
-    void (*reset)();
+    void (*reset)(void *);
 };
 
 static void
@@ -303,7 +288,7 @@ do_reset(verto_ctx *ctx, verto_ev *ev)
     krb5_klog_syslog(LOG_DEBUG, _("Got signal to reset"));
     krb5_klog_reopen(get_context(sc->handle));
     if (sc->reset)
-        sc->reset();
+        sc->reset(sc->handle);
 }
 
 static void
@@ -611,7 +596,6 @@ create_server_socket(struct socksetup *data, struct sockaddr *addr, int type)
                 _("Cannot enable SO_REUSEADDR on fd %d"), sock);
     }
 
-#ifdef KRB5_USE_INET6
     if (addr->sa_family == AF_INET6) {
 #ifdef IPV6_V6ONLY
         if (setv6only(sock, 1))
@@ -624,7 +608,6 @@ create_server_socket(struct socksetup *data, struct sockaddr *addr, int type)
         krb5_klog_syslog(LOG_INFO, _("no IPV6_V6ONLY socket option support"));
 #endif /* IPV6_V6ONLY */
     }
-#endif /* KRB5_USE_INET6 */
 
     if (bind(sock, addr, socklen(addr)) == -1) {
         data->retval = errno;
@@ -737,9 +720,7 @@ static int
 setup_tcp_listener_ports(struct socksetup *data)
 {
     struct sockaddr_in sin4;
-#ifdef KRB5_USE_INET6
     struct sockaddr_in6 sin6;
-#endif
     int i, port;
 
     memset(&sin4, 0, sizeof(sin4));
@@ -749,14 +730,12 @@ setup_tcp_listener_ports(struct socksetup *data)
 #endif
     sin4.sin_addr.s_addr = INADDR_ANY;
 
-#ifdef KRB5_USE_INET6
     memset(&sin6, 0, sizeof(sin6));
     sin6.sin6_family = AF_INET6;
 #ifdef SIN6_LEN
     sin6.sin6_len = sizeof(sin6);
 #endif
     sin6.sin6_addr = in6addr_any;
-#endif
 
     FOREACH_ELT (tcp_port_data, i, port) {
         int s4, s6;
@@ -768,9 +747,6 @@ setup_tcp_listener_ports(struct socksetup *data)
                 return -1;
             s6 = -1;
         } else {
-#ifndef KRB5_USE_INET6
-            abort();
-#else
             s4 = s6 = -1;
 
             set_sa_port((struct sockaddr *)&sin6, htons(port));
@@ -780,7 +756,6 @@ setup_tcp_listener_ports(struct socksetup *data)
                 return -1;
 
             s4 = setup_a_tcp_listener(data, (struct sockaddr *)&sin4);
-#endif /* KRB5_USE_INET6 */
         }
 
         /* Sockets are created, prepare to listen on them. */
@@ -792,7 +767,6 @@ setup_tcp_listener_ports(struct socksetup *data)
                                  s4, paddr((struct sockaddr *)&sin4));
             }
         }
-#ifdef KRB5_USE_INET6
         if (s6 >= 0) {
             if (add_tcp_listener_fd(data, s6) == NULL) {
                 close(s6);
@@ -805,7 +779,6 @@ setup_tcp_listener_ports(struct socksetup *data)
                 krb5_klog_syslog(LOG_INFO,
                                  _("assuming IPv6 socket accepts IPv4"));
         }
-#endif
     }
     return 0;
 }
@@ -814,9 +787,7 @@ static int
 setup_rpc_listener_ports(struct socksetup *data)
 {
     struct sockaddr_in sin4;
-#ifdef KRB5_USE_INET6
     struct sockaddr_in6 sin6;
-#endif
     int i;
     struct rpc_svc_data svc;
 
@@ -827,20 +798,16 @@ setup_rpc_listener_ports(struct socksetup *data)
 #endif
     sin4.sin_addr.s_addr = INADDR_ANY;
 
-#ifdef KRB5_USE_INET6
     memset(&sin6, 0, sizeof(sin6));
     sin6.sin6_family = AF_INET6;
 #ifdef HAVE_SA_LEN
     sin6.sin6_len = sizeof(sin6);
 #endif
     sin6.sin6_addr = in6addr_any;
-#endif
 
     FOREACH_ELT (rpc_svc_data, i, svc) {
         int s4;
-#ifdef KRB5_USE_INET6
         int s6;
-#endif
 
         set_sa_port((struct sockaddr *)&sin4, htons(svc.port));
         s4 = create_server_socket(data, (struct sockaddr *)&sin4, SOCK_STREAM);
@@ -853,7 +820,6 @@ setup_rpc_listener_ports(struct socksetup *data)
             krb5_klog_syslog(LOG_INFO, _("listening on fd %d: rpc %s"),
                              s4, paddr((struct sockaddr *)&sin4));
 
-#ifdef KRB5_USE_INET6
         if (ipv6_enabled()) {
             set_sa_port((struct sockaddr *)&sin6, htons(svc.port));
             s6 = create_server_socket(data, (struct sockaddr *)&sin6,
@@ -867,7 +833,6 @@ setup_rpc_listener_ports(struct socksetup *data)
                 krb5_klog_syslog(LOG_INFO, _("listening on fd %d: rpc %s"),
                                  s6, paddr((struct sockaddr *)&sin6));
         }
-#endif
     }
 
     return 0;
@@ -992,18 +957,7 @@ setup_udp_port(void *P_data, struct sockaddr *addr)
         break;
 #ifdef AF_INET6
     case AF_INET6:
-#ifdef KRB5_USE_INET6
         break;
-#else
-        {
-            static int first = 1;
-            if (first) {
-                krb5_klog_syslog(LOG_INFO, _("skipping local ipv6 addresses"));
-                first = 0;
-            }
-            return 0;
-        }
-#endif
 #endif
 #ifdef AF_LINK /* some BSD systems, AIX */
     case AF_LINK:
@@ -1103,7 +1057,10 @@ static void
 do_network_reconfig(verto_ctx *ctx, verto_ev *ev)
 {
     struct connection *conn = verto_get_private(ev);
-    assert(loop_setup_network(ctx, conn->handle, conn->prog) == 0);
+    if (loop_setup_network(ctx, conn->handle, conn->prog) != 0) {
+        krb5_klog_syslog(LOG_ERR, _("Failed to reconfigure network, exiting"));
+        verto_break(ctx);
+    }
 }
 
 static int
@@ -1175,14 +1132,17 @@ routing_update_needed(struct rt_msghdr *rtm)
 static void
 process_routing_update(verto_ctx *ctx, verto_ev *ev)
 {
-    int n_read, fd;
+    int fd;
+    ssize_t n_read;
+    size_t sz_read;
     struct rt_msghdr rtm;
     struct connection *conn;
 
     fd = verto_get_fd(ev);
     conn = verto_get_private(ev);
     while ((n_read = read(fd, &rtm, sizeof(rtm))) > 0) {
-        if (n_read < sizeof(rtm)) {
+        sz_read = (size_t) n_read; /* Safe, since we just checked the sign */
+        if (sz_read < sizeof(rtm)) {
             /* Quick hack to figure out if the interesting
                fields are present in a short read.
 
@@ -1190,12 +1150,12 @@ process_routing_update(verto_ctx *ctx, verto_ev *ev)
                Only complain if we don't have the critical initial
                header fields.  */
 #define RS(FIELD) (offsetof(struct rt_msghdr, FIELD) + sizeof(rtm.FIELD))
-            if (n_read < RS(rtm_type) ||
-                n_read < RS(rtm_version) ||
-                n_read < RS(rtm_msglen)) {
+            if (sz_read < RS(rtm_type) ||
+                sz_read < RS(rtm_version) ||
+                sz_read < RS(rtm_msglen)) {
                 krb5_klog_syslog(LOG_ERR,
                                  _("short read (%d/%d) from routing socket"),
-                                 n_read, (int) sizeof(rtm));
+                                 (int)sz_read, (int) sizeof(rtm));
                 return;
             }
         }
@@ -1208,10 +1168,10 @@ process_routing_update(verto_ctx *ctx, verto_ev *ev)
         if (rtm.rtm_msglen > sizeof(rtm)) {
             /* It appears we get a partial message and the rest is
                thrown away?  */
-        } else if (rtm.rtm_msglen != n_read) {
+        } else if (rtm.rtm_msglen != sz_read) {
             krb5_klog_syslog(LOG_ERR,
                              _("read %d from routing socket but msglen is %d"),
-                             n_read, rtm.rtm_msglen);
+                             (int)sz_read, rtm.rtm_msglen);
         }
 
         if (routing_update_needed(&rtm)) {
@@ -1312,7 +1272,6 @@ init_addr(krb5_fulladdr *faddr, struct sockaddr *sa)
         faddr->address->contents = (krb5_octet *) &sa2sin(sa)->sin_addr;
         faddr->port = ntohs(sa2sin(sa)->sin_port);
         break;
-#ifdef KRB5_USE_INET6
     case AF_INET6:
         if (IN6_IS_ADDR_V4MAPPED(&sa2sin6(sa)->sin6_addr)) {
             faddr->address->addrtype = ADDRTYPE_INET;
@@ -1325,7 +1284,6 @@ init_addr(krb5_fulladdr *faddr, struct sockaddr *sa)
         }
         faddr->port = ntohs(sa2sin6(sa)->sin6_port);
         break;
-#endif
     default:
         faddr->address->addrtype = -1;
         faddr->address->length = 0;
@@ -1412,8 +1370,7 @@ recv_from_to(int s, void *buf, size_t len, int flags,
                 return r;
             }
 #endif
-#if defined(KRB5_USE_INET6) && defined(IPV6_PKTINFO) && \
-    defined(HAVE_STRUCT_IN6_PKTINFO)
+#if defined(IPV6_PKTINFO) && defined(HAVE_STRUCT_IN6_PKTINFO)
             if (cmsgptr->cmsg_level == IPPROTO_IPV6
                 && cmsgptr->cmsg_type == IPV6_PKTINFO
                 && *tolen >= sizeof(struct sockaddr_in6)) {
@@ -1489,8 +1446,7 @@ send_to_from(int s, void *buf, size_t len, int flags,
         msg.msg_controllen = CMSG_SPACE(sizeof(struct in_pktinfo));
         break;
 #endif
-#if defined(KRB5_USE_INET6) && defined(IPV6_PKTINFO) && \
-    defined(HAVE_STRUCT_IN6_PKTINFO)
+#if defined(IPV6_PKTINFO) && defined(HAVE_STRUCT_IN6_PKTINFO)
     case AF_INET6:
         if (fromlen != sizeof(struct sockaddr_in6))
             goto use_sendto;

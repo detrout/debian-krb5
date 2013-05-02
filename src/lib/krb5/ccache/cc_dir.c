@@ -218,13 +218,15 @@ cleanup:
     return ret;
 }
 
-/* Verify that a cache directory path exists as a directory. */
+/* Verify or create a cache directory path. */
 static krb5_error_code
 verify_dir(krb5_context context, const char *dirname)
 {
     struct stat st;
 
     if (stat(dirname, &st) < 0) {
+        if (errno == ENOENT && mkdir(dirname, S_IRWXU) == 0)
+            return 0;
         krb5_set_error_message(context, KRB5_FCC_NOFILE,
                                _("Credential cache directory %s does not "
                                  "exist"), dirname);
@@ -343,9 +345,9 @@ dcc_resolve(krb5_context context, krb5_ccache *cache_out, const char *residual)
             if (ret)
                 goto cleanup;
             ret = subsidiary_residual(residual, "tkt", &sresidual);
-            if (ret)
-                goto cleanup;
         }
+        if (ret)
+            goto cleanup;
         residual = sresidual;
     }
 
@@ -433,6 +435,7 @@ dcc_close(krb5_context context, krb5_ccache cache)
     ret = krb5_fcc_ops.close(context, data->fcc);
     free(data->residual);
     free(data);
+    free(cache);
     return ret;
 }
 
@@ -632,7 +635,7 @@ dcc_ptcursor_next(krb5_context context, krb5_cc_ptcursor cursor,
     }
 
     /* We exhausted the directory without finding a cache to yield. */
-    free(data->dir);
+    closedir(data->dir);
     data->dir = NULL;
     return 0;
 }

@@ -1015,12 +1015,15 @@ int i = 1;
 fi
 if test "$k5_cv_openssl_version_okay" = yes && (test "$enable_pkinit" = yes || test "$enable_pkinit" = try); then
   K5_GEN_MAKEFILE(plugins/preauth/pkinit)
+  PKINIT=yes
 elif test "$k5_cv_openssl_version_okay" = no && test "$enable_pkinit" = yes; then
   AC_MSG_ERROR([Version of OpenSSL is too old; cannot enable PKINIT.])
 else
   AC_DEFINE([DISABLE_PKINIT], 1, [Define to disable PKINIT plugin support])
   AC_MSG_NOTICE([Disabling PKINIT support.])
+  PKINIT=no
 fi
+AC_SUBST(PKINIT)
 
 # for lib/apputils
 AC_REPLACE_FUNCS(daemon)
@@ -1216,7 +1219,7 @@ AC_ARG_WITH([system-verto],
   [AC_HELP_STRING([--with-system-verto], [always use system verto library])],
   [], [with_system_verto=default])
 VERTO_CFLAGS=
-VERTO_LIBS="-lverto-k5ev -lverto"
+VERTO_LIBS="-lverto"
 VERTO_VERSION=k5
 if test "x$with_system_verto" != xno; then
   if verto_cflags=`pkg-config --cflags libverto 2>&1`; then
@@ -1224,7 +1227,7 @@ if test "x$with_system_verto" != xno; then
     VERTO_LIBS=`pkg-config --libs libverto`
     VERTO_VERSION=sys
   else
-    AC_CHECK_LIB([verto], [verto_run], [VERTO_VERSION=sys; VERTO_LIBS=-lverto],
+    AC_CHECK_LIB([verto], [verto_run], [VERTO_VERSION=sys],
       [if test "x$with_system_verto" = xyes; then
         AC_MSG_ERROR([cannot detect system libverto])
       fi])
@@ -1234,17 +1237,64 @@ if test "x$VERTO_VERSION" = xsys; then
   AC_MSG_NOTICE([Using system libverto])
 else
   AC_MSG_RESULT([Using built-in libverto])
-  AC_DEFINE([INTERNAL_VERTO],[1],[Define if using bundled libverto])
 fi
 AC_SUBST([VERTO_CFLAGS])
 AC_SUBST([VERTO_LIBS])
 AC_SUBST([VERTO_VERSION])
 
+AC_PATH_PROG(GROFF, groff)
+
+# Make localedir work in autoconf 2.5x.
+if test "${localedir+set}" != set; then
+    localedir='$(datadir)/locale'
+fi
+AC_SUBST(localedir)
+
+# Build-time default ccache, keytab, and client keytab names.  These
+# can be given as variable arguments DEFCCNAME, DEFKTNAME, and
+# DEFCKTNAME.  Otherwise, we try to get the OS defaults from
+# krb5-config if we can, or fall back to hardcoded defaults.
+AC_ARG_VAR(DEFCCNAME, [Default ccache name])
+AC_ARG_VAR(DEFKTNAME, [Default keytab name])
+AC_ARG_VAR(DEFCKTNAME, [Default client keytab name])
+AC_ARG_WITH([krb5-config],
+	AC_HELP_STRING([--with-krb5-config=PATH],
+		[path to existing krb5-config program for defaults]), ,
+        [with_krb5_config=krb5-config])
+if test "x$with_krb5_config" != xno; then
+	if test "x$with_krb5_config" = xyes; then
+		with_krb5_config=krb5-config
+	fi
+	if $with_krb5_config --help 2>&1 | grep defccname >/dev/null; then
+		AC_MSG_NOTICE([Using $with_krb5_config for build defaults])
+		: "${DEFCCNAME=`$with_krb5_config --defccname`}"
+		: "${DEFKTNAME=`$with_krb5_config --defktname`}"
+		: "${DEFCKTNAME=`$with_krb5_config --defcktname`}"
+	fi
+fi
+if test "${DEFCCNAME+set}" != set; then
+	DEFCCNAME=FILE:/tmp/krb5cc_%{uid}
+fi
+if test "${DEFKTNAME+set}" != set; then
+	DEFKTNAME=FILE:/etc/krb5.keytab
+fi
+if test "${DEFCKTNAME+set}" != set; then
+	adl_RECURSIVE_EVAL($localstatedir, exp_localstatedir)
+	DEFCKTNAME=FILE:$exp_localstatedir/krb5/user/%{euid}/client.keytab
+fi
+AC_MSG_NOTICE([Default ccache name: $DEFCCNAME])
+AC_MSG_NOTICE([Default keytab name: $DEFKTNAME])
+AC_MSG_NOTICE([Default client keytab name: $DEFCKTNAME])
+AC_DEFINE_UNQUOTED(DEFCCNAME, ["$DEFCCNAME"], [Define to default ccache name])
+AC_DEFINE_UNQUOTED(DEFKTNAME, ["$DEFKTNAME"], [Define to default keytab name])
+AC_DEFINE_UNQUOTED(DEFCKTNAME, ["$DEFCKTNAME"],
+                   [Define to default client keytab name])
+
 AC_CONFIG_FILES(krb5-config, [chmod +x krb5-config])
 V5_AC_OUTPUT_MAKEFILE(.
 
 	util util/support util/profile util/profile/testmod util/send-pr
-	util/verto util/k5ev
+	util/verto
 
 	lib lib/kdb
 
@@ -1273,7 +1323,7 @@ dnl	lib/krb5/ccache/ccapi
 
 dnl	ccapi ccapi/lib ccapi/lib/unix ccapi/server ccapi/server/unix ccapi/test
 
-	kdc slave config-files gen-manpages include
+	kdc slave config-files man doc include
 
 	plugins/locate/python
 	plugins/kadm5_hook/test

@@ -27,6 +27,7 @@
 #include "k5-platform.h"
 #include <krb5.h>
 #include <com_err.h>
+#include <locale.h>
 #include <string.h>
 #include <stdio.h>
 #ifdef HAVE_UNISTD_H
@@ -81,7 +82,7 @@ main(argc, argv)
     int quiet = 0;
     int all = 0;
 
-    setlocale(LC_MESSAGES, "");
+    setlocale(LC_ALL, "");
     progname = GET_PROGNAME(argv[0]);
 
     while ((c = getopt(argc, argv, "54Aqc:")) != -1) {

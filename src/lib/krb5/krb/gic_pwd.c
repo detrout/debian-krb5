@@ -2,6 +2,7 @@
 #include "k5-int.h"
 #include "com_err.h"
 #include "init_creds_ctx.h"
+#include "int-proto.h"
 
 krb5_error_code
 krb5_get_as_key_password(krb5_context context,
@@ -12,7 +13,8 @@ krb5_get_as_key_password(krb5_context context,
                          krb5_data *salt,
                          krb5_data *params,
                          krb5_keyblock *as_key,
-                         void *gak_data)
+                         void *gak_data,
+                         k5_response_items *ritems)
 {
     krb5_data *password;
     krb5_error_code ret;
@@ -21,8 +23,21 @@ krb5_get_as_key_password(krb5_context context,
     char promptstr[1024];
     krb5_prompt prompt;
     krb5_prompt_type prompt_type;
+    const char *rpass;
 
     password = (krb5_data *) gak_data;
+    assert(password->length > 0);
+
+    /* If we need to get the AS key via the responder, ask for it. */
+    if (as_key == NULL) {
+        /* However, if we already have a password, don't ask. */
+        if (password->data[0] != '\0')
+            return 0;
+
+        return k5_response_items_ask_question(ritems,
+                                              KRB5_RESPONDER_QUESTION_PASSWORD,
+                                              "");
+    }
 
     /* If there's already a key of the correct etype, we're done.
        If the etype is wrong, free the existing key, and make
@@ -39,7 +54,17 @@ krb5_get_as_key_password(krb5_context context,
         }
     }
 
-    if (password->length == 0 || password->data[0] == '\0') {
+    if (password->data[0] == '\0') {
+        /* Check the responder for the password. */
+        rpass = k5_response_items_get_answer(ritems,
+                                             KRB5_RESPONDER_QUESTION_PASSWORD);
+        if (rpass != NULL) {
+            strlcpy(password->data, rpass, password->length);
+            password->length = strlen(password->data);
+        }
+    }
+
+    if (password->data[0] == '\0') {
         if (prompter == NULL)
             return(EIO);
 
@@ -63,7 +88,7 @@ krb5_get_as_key_password(krb5_context context,
             return(ret);
     }
 
-    if (salt->length == SALT_TYPE_AFS_LENGTH && salt->data == NULL) {
+    if (salt == NULL) {
         if ((ret = krb5_principal2salt(context, client, &defsalt)))
             return(ret);
 
@@ -218,11 +243,11 @@ krb5_error_code KRB5_CALLCONV
 krb5_get_init_creds_password(krb5_context context,
                              krb5_creds *creds,
                              krb5_principal client,
-                             char *password,
+                             const char *password,
                              krb5_prompter_fct prompter,
                              void *data,
                              krb5_deltat start_time,
-                             char *in_tkt_service,
+                             const char *in_tkt_service,
                              krb5_get_init_creds_opt *options)
 {
     krb5_error_code ret, ret2;
@@ -235,6 +260,7 @@ krb5_get_init_creds_password(krb5_context context,
     char banner[1024], pw0array[1024], pw1array[1024];
     krb5_prompt prompt[2];
     krb5_prompt_type prompt_types[sizeof(prompt)/sizeof(prompt[0])];
+    char *message;
 
     use_master = 0;
     as_reply = NULL;
@@ -308,11 +334,6 @@ krb5_get_init_creds_password(krb5_context context,
         else
             use_master = 0;
     }
-
-#ifdef USE_KIM
-    if (ret == KRB5KDC_ERR_KEY_EXP)
-        goto cleanup;   /* Login library will deal appropriately with this error */
-#endif
 
     /* at this point, we have an error from the master.  if the error
        is not password expired, or if it is but there's no prompter,
@@ -413,19 +434,21 @@ krb5_get_init_creds_password(krb5_context context,
 
             /* the error was soft, so try again */
 
+            if (krb5_chpw_message(context, &result_string, &message) != 0)
+                message = NULL;
+
             /* 100 is I happen to know that no code_string will be longer
                than 100 chars */
 
-            if (result_string.length > (sizeof(banner)-100))
-                result_string.length = sizeof(banner)-100;
+            if (message != NULL && strlen(message) > (sizeof(banner) - 100))
+                message[sizeof(banner) - 100] = '\0';
 
             snprintf(banner, sizeof(banner),
-                     _("%.*s%s%.*s.  Please try again.\n"),
+                     _("%.*s%s%s.  Please try again.\n"),
                      (int) code_string.length, code_string.data,
-                     result_string.length ? ": " : "",
-                     (int) result_string.length,
-                     result_string.data ? result_string.data : "");
+                     message ? ": " : "", message ? message : "");
 
+            free(message);
             free(code_string.data);
             free(result_string.data);
         }

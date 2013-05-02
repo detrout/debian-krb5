@@ -81,10 +81,6 @@
 #include "extern.h"
 #include <stdio.h>
 #include "adm_proto.h"
-#if APPLE_PKINIT
-#include "pkinit_server.h"
-#include "pkinit_cert_store.h"
-#endif /* APPLE_PKINIT */
 
 #include <syslog.h>
 
@@ -102,6 +98,7 @@ typedef struct preauth_system_st {
     krb5_kdcpreauth_verify_fn verify_padata;
     krb5_kdcpreauth_return_fn return_padata;
     krb5_kdcpreauth_free_modreq_fn free_modreq;
+    krb5_kdcpreauth_loop_fn loop;
 } preauth_system;
 
 static void
@@ -149,58 +146,8 @@ return_pw_salt(krb5_context, krb5_pa_data *padata,
                krb5_kdcpreauth_moddata moddata, krb5_kdcpreauth_modreq modreq);
 
 
-#if APPLE_PKINIT
-/* PKINIT preauth support */
-static krb5_error_code get_pkinit_edata(
-    krb5_context context,
-    krb5_kdc_req *request,
-    krb5_db_entry *client,
-    krb5_db_entry *server,
-    preauth_get_entry_data_proc get_entry_data,
-    void *pa_module_context,
-    krb5_pa_data *pa_data);
-static krb5_error_code verify_pkinit_request(
-    krb5_context context,
-    krb5_db_entry *client,
-    krb5_data *req_pkt,
-    krb5_kdc_req *request,
-    krb5_enc_tkt_part *enc_tkt_reply,
-    krb5_pa_data *data,
-    preauth_get_entry_data_proc get_entry_data,
-    void *pa_module_context,
-    void **pa_request_context,
-    krb5_data **e_data,
-    krb5_authdata ***authz_data);
-static krb5_error_code return_pkinit_response(
-    krb5_context context,
-    krb5_pa_data * padata,
-    krb5_db_entry *client,
-    krb5_data *req_pkt,
-    krb5_kdc_req *request,
-    krb5_kdc_rep *reply,
-    krb5_key_data *client_key,
-    krb5_keyblock *encrypting_key,
-    krb5_pa_data **send_pa,
-    preauth_get_entry_data_proc get_entry_data,
-    void *pa_module_context,
-    void **pa_request_context);
-#endif /* APPLE_PKINIT */
 
 static preauth_system static_preauth_systems[] = {
-#if APPLE_PKINIT
-    {
-        "pkinit",
-        KRB5_PADATA_PK_AS_REQ,
-        PA_SUFFICIENT,
-        NULL,                   /* pa_sys_context */
-        NULL,                   /* init */
-        NULL,                   /* fini */
-        get_pkinit_edata,
-        verify_pkinit_request,
-        return_pkinit_response,
-        NULL                    /* free_modreq */
-    },
-#endif /* APPLE_PKINIT */
     {
         "FAST",
         KRB5_PADATA_FX_FAST,
@@ -305,7 +252,7 @@ get_plugin_vtables(krb5_context context,
     if (vtables == NULL)
         goto cleanup;
     for (pl = plugins, n_tables = 0; *pl != NULL; pl++) {
-        if ((*pl)(context, 1, 1, (krb5_plugin_vtable)&vtables[n_tables]) == 0)
+        if ((*pl)(context, 1, 2, (krb5_plugin_vtable)&vtables[n_tables]) == 0)
             n_tables++;
     }
     for (i = 0, n_systems = 0; i < n_tables; i++) {
@@ -323,23 +270,24 @@ cleanup:
 /* Make a list of realm names.  The caller should free the list container but
  * not the list elements (which are aliases into kdc_realmlist). */
 static krb5_error_code
-get_realm_names(const char ***list_out)
+get_realm_names(struct server_handle *handle, const char ***list_out)
 {
     const char **list;
     int i;
 
-    list = calloc(kdc_numrealms + 1, sizeof(*list));
+    list = calloc(handle->kdc_numrealms + 1, sizeof(*list));
     if (list == NULL)
         return ENOMEM;
-    for (i = 0; i < kdc_numrealms; i++)
-        list[i] = kdc_realmlist[i]->realm_name;
+    for (i = 0; i < handle->kdc_numrealms; i++)
+        list[i] = handle->kdc_realmlist[i]->realm_name;
     list[i] = NULL;
     *list_out = list;
     return 0;
 }
 
 void
-load_preauth_plugins(krb5_context context)
+load_preauth_plugins(struct server_handle *handle, krb5_context context,
+                     verto_ctx *ctx)
 {
     krb5_error_code ret;
     struct krb5_kdcpreauth_vtable_st *vtables = NULL, *vt;
@@ -357,7 +305,7 @@ load_preauth_plugins(krb5_context context)
     if (preauth_systems == NULL)
         goto cleanup;
 
-    if (get_realm_names(&realm_names))
+    if (get_realm_names(handle, &realm_names))
         goto cleanup;
 
     /* Add the static system to the list first.  No static systems require
@@ -381,6 +329,20 @@ load_preauth_plugins(krb5_context context)
                 continue;
             }
         }
+
+        if (vt->loop) {
+            ret = vt->loop(context, moddata, ctx);
+            if (ret) {
+                emsg = krb5_get_error_message(context, ret);
+                krb5_klog_syslog(LOG_ERR, _("preauth %s failed to setup "
+                                            "loop: %s"), vt->name, emsg);
+                krb5_free_error_message(context, emsg);
+                if (vt->fini)
+                    vt->fini(context, moddata);
+                continue;
+            }
+        }
+
         /* Add this module to the systems list once for each pa type. */
         for (j = 0; vt->pa_type_list[j] > 0; j++) {
             sys = &preauth_systems[n_systems];
@@ -395,6 +357,7 @@ load_preauth_plugins(krb5_context context)
             sys->verify_padata = vt->verify;
             sys->return_padata = vt->return_padata;
             sys->free_modreq = vt->free_modreq;
+            sys->loop = vt->loop;
             n_systems++;
         }
     }
@@ -507,11 +470,10 @@ client_keys(krb5_context context, krb5_kdcpreauth_rock rock,
     krb5_key_data *entry_key;
     int i, k;
 
-    keys = malloc(sizeof(krb5_keyblock) * (request->nktypes + 1));
+    keys = calloc(request->nktypes + 1, sizeof(krb5_keyblock));
     if (keys == NULL)
         return ENOMEM;
 
-    memset(keys, 0, sizeof(krb5_keyblock) * (request->nktypes + 1));
     k = 0;
     for (i = 0; i < request->nktypes; i++) {
         entry_key = NULL;
@@ -772,6 +734,7 @@ hint_list_finish(struct hint_state *state, krb5_error_code code)
 {
     kdc_hint_respond_fn oldrespond = state->respond;
     void *oldarg = state->arg;
+    kdc_realm_t *kdc_active_realm = state->realm;
 
     if (!code) {
         if (state->pa_data[0] == 0) {
@@ -800,7 +763,6 @@ finish_get_edata(void *arg, krb5_error_code code, krb5_pa_data *pa)
 {
     struct hint_state *state = arg;
 
-    kdc_active_realm = state->realm;
     if (code == 0) {
         if (pa == NULL) {
             /* Include an empty value of the current type. */
@@ -819,6 +781,7 @@ static void
 hint_list_next(struct hint_state *state)
 {
     preauth_system *ap = state->ap;
+    kdc_realm_t *kdc_active_realm = state->realm;
 
     if (ap->type == -1) {
         hint_list_finish(state, 0);
@@ -853,8 +816,8 @@ get_preauth_hint_list(krb5_kdc_req *request, krb5_kdcpreauth_rock rock,
     *e_data_out = NULL;
 
     /* Allocate our state. */
-    state = malloc(sizeof(*state));
-    if (!state) {
+    state = calloc(1, sizeof(*state));
+    if (state == NULL) {
         (*respond)(arg);
         return;
     }
@@ -864,7 +827,7 @@ get_preauth_hint_list(krb5_kdc_req *request, krb5_kdcpreauth_rock rock,
     state->arg = arg;
     state->request = request;
     state->rock = rock;
-    state->realm = kdc_active_realm;
+    state->realm = rock->rstate->realm_data;
     state->e_data_out = e_data_out;
 
     /* Allocate two extra entries for the cookie and the terminator. */
@@ -1040,7 +1003,6 @@ finish_verify_padata(void *arg, krb5_error_code code,
     krb5_boolean typed_e_data_flag;
 
     assert(state);
-    kdc_active_realm = state->realm; /* Restore the realm. */
     *state->modreq_ptr = modreq;
 
     if (code) {
@@ -1174,12 +1136,11 @@ check_padata(krb5_context context, krb5_kdcpreauth_rock rock,
         return;
     }
 
-    state = malloc(sizeof(*state));
-    if (!state) {
+    state = calloc(1, sizeof(*state));
+    if (state == NULL) {
         (*respond)(arg, ENOMEM);
         return;
     }
-    memset(state, 0, sizeof(*state));
     state->respond = respond;
     state->arg = arg;
     state->context = context;
@@ -1190,7 +1151,7 @@ check_padata(krb5_context context, krb5_kdcpreauth_rock rock,
     state->padata_context = padata_context;
     state->e_data_out = e_data;
     state->typed_e_data_out = typed_e_data;
-    state->realm = kdc_active_realm;
+    state->realm = rock->rstate->realm_data;
 
 #ifdef DEBUG
     krb5_klog_syslog (LOG_DEBUG, "checking padata");
@@ -1321,62 +1282,54 @@ request_contains_enctype(krb5_context context,  const krb5_kdc_req *request,
 static krb5_error_code
 _make_etype_info_entry(krb5_context context,
                        krb5_principal client_princ, krb5_key_data *client_key,
-                       krb5_enctype etype, krb5_etype_info_entry **entry,
+                       krb5_enctype etype, krb5_etype_info_entry **entry_out,
                        int etype_info2)
 {
-    krb5_data                   salt;
-    krb5_etype_info_entry *     tmp_entry;
-    krb5_error_code             retval;
+    krb5_error_code retval;
+    krb5_int16 salttype;
+    krb5_data *salt = NULL;
+    krb5_etype_info_entry *entry = NULL;
 
-    if ((tmp_entry = malloc(sizeof(krb5_etype_info_entry))) == NULL)
+    *entry_out = NULL;
+    entry = malloc(sizeof(*entry));
+    if (entry == NULL)
         return ENOMEM;
 
-    salt.data = 0;
-
-    tmp_entry->magic = KV5M_ETYPE_INFO_ENTRY;
-    tmp_entry->etype = etype;
-    tmp_entry->length = KRB5_ETYPE_NO_SALT;
-    tmp_entry->salt = 0;
-    tmp_entry->s2kparams.data = NULL;
-    tmp_entry->s2kparams.length = 0;
-    retval = get_salt_from_key(context, client_princ, client_key, &salt);
+    entry->magic = KV5M_ETYPE_INFO_ENTRY;
+    entry->etype = etype;
+    entry->length = KRB5_ETYPE_NO_SALT;
+    entry->salt = NULL;
+    entry->s2kparams = empty_data();
+    retval = krb5_dbe_compute_salt(context, client_key, client_princ,
+                                   &salttype, &salt);
     if (retval)
-        goto fail;
-    if (etype_info2 && client_key->key_data_ver > 1 &&
-        client_key->key_data_type[1] == KRB5_KDB_SALTTYPE_AFS3) {
+        goto cleanup;
+    if (etype_info2 && salttype == KRB5_KDB_SALTTYPE_AFS3) {
         switch (etype) {
         case ENCTYPE_DES_CBC_CRC:
         case ENCTYPE_DES_CBC_MD4:
         case ENCTYPE_DES_CBC_MD5:
-            tmp_entry->s2kparams.data = malloc(1);
-            if (tmp_entry->s2kparams.data == NULL) {
-                retval = ENOMEM;
-                goto fail;
-            }
-            tmp_entry->s2kparams.length = 1;
-            tmp_entry->s2kparams.data[0] = 1;
+            retval = alloc_data(&entry->s2kparams, 1);
+            if (retval)
+                goto cleanup;
+            entry->s2kparams.data[0] = 1;
             break;
         default:
             break;
         }
     }
 
-    if (salt.length >= 0) {
-        tmp_entry->length = salt.length;
-        tmp_entry->salt = (unsigned char *) salt.data;
-        salt.data = 0;
-    }
-    *entry = tmp_entry;
-    return 0;
+    entry->length = salt->length;
+    entry->salt = (unsigned char *)salt->data;
+    salt->data = NULL;
+    *entry_out = entry;
+    entry = NULL;
 
-fail:
-    if (tmp_entry) {
-        if (tmp_entry->s2kparams.data)
-            free(tmp_entry->s2kparams.data);
-        free(tmp_entry);
-    }
-    if (salt.data)
-        free(salt.data);
+cleanup:
+    if (entry != NULL)
+        krb5_free_data_contents(context, &entry->s2kparams);
+    free(entry);
+    krb5_free_data(context, salt);
     return retval;
 }
 
@@ -1613,8 +1566,8 @@ return_pw_salt(krb5_context context, krb5_pa_data *in_padata,
 {
     krb5_error_code     retval;
     krb5_pa_data *      padata;
-    krb5_data *         scratch;
-    krb5_data           salt_data;
+    krb5_data *         salt = NULL;
+    krb5_int16          salttype;
     krb5_key_data *     client_key = rock->client_key;
     int i;
 
@@ -1622,527 +1575,39 @@ return_pw_salt(krb5_context context, krb5_pa_data *in_padata,
         if (enctype_requires_etype_info_2(request->ktype[i]))
             return 0;
     }
-    if (client_key->key_data_ver == 1 ||
-        client_key->key_data_type[1] == KRB5_KDB_SALTTYPE_NORMAL)
+    retval = krb5_dbe_compute_salt(context, client_key, request->client,
+                                   &salttype, &salt);
+    if (retval)
         return 0;
 
-    if ((padata = malloc(sizeof(krb5_pa_data))) == NULL)
-        return ENOMEM;
+    padata = k5alloc(sizeof(*padata), &retval);
+    if (padata == NULL)
+        goto cleanup;
     padata->magic = KV5M_PA_DATA;
-    padata->pa_type = KRB5_PADATA_PW_SALT;
 
-    switch (client_key->key_data_type[1]) {
-    case KRB5_KDB_SALTTYPE_V4:
-        /* send an empty (V4) salt */
-        padata->contents = 0;
-        padata->length = 0;
-        break;
-    case KRB5_KDB_SALTTYPE_NOREALM:
-        if ((retval = krb5_principal2salt_norealm(kdc_context,
-                                                  request->client,
-                                                  &salt_data)))
+    if (salttype == KRB5_KDB_SALTTYPE_AFS3) {
+        padata->contents = k5alloc(salt->length + 1, &retval);
+        if (padata->contents == NULL)
             goto cleanup;
-        padata->contents = (krb5_octet *)salt_data.data;
-        padata->length = salt_data.length;
-        break;
-    case KRB5_KDB_SALTTYPE_AFS3:
-        /* send an AFS style realm-based salt */
-        /* for now, just pass the realm back and let the client
-           do the work. In the future, add a kdc configuration
-           variable that specifies the old cell name. */
+        memcpy(padata->contents, salt->data, salt->length);
         padata->pa_type = KRB5_PADATA_AFS3_SALT;
-        /* it would be just like ONLYREALM, but we need to pass the 0 */
-        scratch = krb5_princ_realm(kdc_context, request->client);
-        if ((padata->contents = malloc(scratch->length+1)) == NULL) {
-            retval = ENOMEM;
-            goto cleanup;
-        }
-        memcpy(padata->contents, scratch->data, scratch->length);
-        padata->length = scratch->length+1;
-        padata->contents[scratch->length] = 0;
-        break;
-    case KRB5_KDB_SALTTYPE_ONLYREALM:
-        scratch = krb5_princ_realm(kdc_context, request->client);
-        if ((padata->contents = malloc(scratch->length)) == NULL) {
-            retval = ENOMEM;
-            goto cleanup;
-        }
-        memcpy(padata->contents, scratch->data, scratch->length);
-        padata->length = scratch->length;
-        break;
-    case KRB5_KDB_SALTTYPE_SPECIAL:
-        if ((padata->contents = malloc(client_key->key_data_length[1]))
-            == NULL) {
-            retval = ENOMEM;
-            goto cleanup;
-        }
-        memcpy(padata->contents, client_key->key_data_contents[1],
-               client_key->key_data_length[1]);
-        padata->length = client_key->key_data_length[1];
-        break;
-    default:
-        free(padata);
-        return 0;
+        padata->contents[salt->length] = '\0';
+        padata->length = salt->length + 1;
+    } else {
+        padata->pa_type = KRB5_PADATA_PW_SALT;
+        padata->length = salt->length;
+        padata->contents = (krb5_octet *)salt->data;
+        salt->data = NULL;
     }
 
     *send_pa = padata;
-    return 0;
+    padata = NULL;
 
 cleanup:
     free(padata);
+    krb5_free_data(context, salt);
     return retval;
 }
-
-
-
-#if APPLE_PKINIT
-/* PKINIT preauth support */
-#define  PKINIT_DEBUG    0
-#if     PKINIT_DEBUG
-#define kdcPkinitDebug(args...)       printf(args)
-#else
-#define kdcPkinitDebug(args...)
-#endif
-
-/*
- * get_edata() - our only job is to determine whether this KDC is capable of
- * performing PKINIT. We infer that from the presence or absence of any
- * KDC signing cert.
- */
-static krb5_error_code get_pkinit_edata(
-    krb5_context context,
-    krb5_kdc_req *request,
-    krb5_db_entry *client,
-    krb5_db_entry *server,
-    preauth_get_entry_data_proc pkinit_get_entry_data,
-    void *pa_module_context,
-    krb5_pa_data *pa_data)
-{
-    krb5_pkinit_signing_cert_t cert = NULL;
-    krb5_error_code err = krb5_pkinit_get_kdc_cert(0, NULL, NULL, &cert);
-
-    kdcPkinitDebug("get_pkinit_edata: kdc cert %s\n", err ? "NOT FOUND" : "FOUND");
-    if(cert) {
-        krb5_pkinit_release_cert(cert);
-    }
-    return err;
-}
-
-/*
- * This is 0 only for testing until the KDC DB contains
- * the hash of the client cert
- */
-#define REQUIRE_CLIENT_CERT_MATCH   1
-
-static krb5_error_code verify_pkinit_request(
-    krb5_context context,
-    krb5_db_entry *client,
-    krb5_data *req_pkt,
-    krb5_kdc_req *request,
-    krb5_enc_tkt_part *enc_tkt_reply,
-    krb5_pa_data *data,
-    preauth_get_entry_data_proc pkinit_get_entry_data,
-    void *pa_module_context,
-    void **pa_request_context,
-    krb5_data **e_data,
-    krb5_authdata ***authz_data)
-{
-    krb5_error_code         krtn;
-    krb5_data               pa_data;
-    krb5_data               *der_req = NULL;
-    krb5_boolean            valid_cksum;
-    char                    *cert_hash = NULL;
-    unsigned                cert_hash_len;
-    unsigned                key_dex;
-    unsigned                cert_match = 0;
-    krb5_keyblock           decrypted_key, *mkey_ptr;
-
-    /* the data we get from the AS-REQ */
-    krb5_timestamp          client_ctime = 0;
-    krb5_ui_4               client_cusec = 0;
-    krb5_timestamp          kdc_ctime = 0;
-    krb5_int32              kdc_cusec = 0;
-    krb5_ui_4               nonce = 0;
-    krb5_checksum           pa_cksum;
-    krb5int_cert_sig_status cert_sig_status;
-    krb5_data               client_cert = {0, 0, NULL};
-
-    krb5_kdc_req *tmp_as_req = NULL;
-
-    kdcPkinitDebug("verify_pkinit_request\n");
-
-    decrypted_key.contents = NULL;
-    pa_data.data = (char *)data->contents;
-    pa_data.length = data->length;
-    krtn = krb5int_pkinit_as_req_parse(context, &pa_data,
-                                       &client_ctime, &client_cusec,
-                                       &nonce, &pa_cksum,
-                                       &cert_sig_status,
-                                       NULL, NULL,/* num_cms_types, cms_types */
-                                       &client_cert,       /* signer_cert */
-                                       /* remaining fields unused (for now) */
-                                       NULL, NULL,/* num_all_certs, all_certs */
-                                       NULL, NULL,/* num_trusted_CAs, trusted_CAs */
-                                       NULL);     /* kdc_cert */
-    if(krtn) {
-        kdcPkinitDebug("pa_pk_as_req_parse returned %d; PKINIT aborting.\n",
-                       (int)krtn);
-        return krtn;
-    }
-#if     PKINIT_DEBUG
-    if(cert_sig_status != pki_cs_good) {
-        kdcPkinitDebug("verify_pkinit_request: cert_sig_status %d\n",
-                       (int)cert_sig_status);
-    }
-#endif  /* PKINIT_DEBUG */
-
-    /*
-     * Verify signature and cert.
-     * FIXME: The spec calls for an e-data with error-specific type to be
-     * returned on error here. TD_TRUSTED_CERTIFIERS
-     * to be returned to the client here. There is no way for a preauth
-     * module to pass back e-data to process_as_req at this time. We
-     * might want to add such capability via an out param to check_padata
-     * and to its callees.
-     */
-    switch(cert_sig_status) {
-    case pki_cs_good:
-        break;
-    case pki_cs_sig_verify_fail:
-        /* no e-data */
-        krtn = KDC_ERR_INVALID_SIG;
-        goto cleanup;
-    case pki_cs_no_root:
-    case pki_cs_unknown_root:
-    case pki_cs_untrusted:
-        /*
-         * Can't verify to known root.
-         * e-data TD_TRUSTED_CERTIFIERS
-         */
-        kdcPkinitDebug("verify_pkinit_request: KDC_ERR_CANT_VERIFY_CERTIFICATE\n");
-        krtn = KDC_ERR_CANT_VERIFY_CERTIFICATE;
-        goto cleanup;
-    case pki_cs_bad_leaf:
-    case pki_cs_expired:
-    case pki_cs_not_valid_yet:
-        /*
-         * Problems with client cert itself.
-         * e-data type TD_INVALID_CERTIFICATES
-         */
-        krtn = KDC_ERR_INVALID_CERTIFICATE;
-        goto cleanup;
-    case pki_cs_revoked:
-        /* e-data type TD-INVALID-CERTIFICATES */
-        krtn = KDC_ERR_REVOKED_CERTIFICATE;
-        goto cleanup;
-    case pki_bad_key_use:
-        krtn = KDC_ERR_INCONSISTENT_KEY_PURPOSE;
-        /* no e-data */
-        goto cleanup;
-    case pki_bad_digest:
-        /* undefined (explicitly!) e-data */
-        krtn = KDC_ERR_DIGEST_IN_SIGNED_DATA_NOT_ACCEPTED;
-        goto cleanup;
-    case pki_bad_cms:
-    case pki_cs_other_err:
-    default:
-        krtn = KRB5KDC_ERR_PREAUTH_FAILED;
-        goto cleanup;
-    }
-
-    krtn = krb5_us_timeofday(context, &kdc_ctime, &kdc_cusec);
-    if(krtn) {
-        goto cleanup;
-    }
-    if (labs(kdc_ctime - client_ctime) > context->clockskew) {
-        kdcPkinitDebug("verify_pkinit_request: clock skew violation client %d svr %d\n",
-                       (int)client_ctime, (int)kdc_ctime);
-        krtn = KRB5KRB_AP_ERR_SKEW;
-        goto cleanup;
-    }
-
-    /*
-     * The KDC may have modified the request after decoding it.
-     * We need to compute the checksum on the data that
-     * came from the client.  Therefore, we use the original
-     * packet contents.
-     */
-    krtn = decode_krb5_as_req(req_pkt, &tmp_as_req);
-    if(krtn) {
-        kdcPkinitDebug("decode_krb5_as_req returned %d\n", (int)krtn);
-        goto cleanup;
-    }
-
-    /* calculate and compare checksum */
-    krtn = encode_krb5_kdc_req_body(tmp_as_req, &der_req);
-    if(krtn) {
-        kdcPkinitDebug("encode_krb5_kdc_req_body returned %d\n", (int)krtn);
-        goto cleanup;
-    }
-    krtn = krb5_c_verify_checksum(context, NULL, 0, der_req,
-                                  &pa_cksum, &valid_cksum);
-    if(krtn) {
-        kdcPkinitDebug("krb5_c_verify_checksum returned %d\n", (int)krtn);
-        goto cleanup;
-    }
-    if(!valid_cksum) {
-        kdcPkinitDebug("verify_pkinit_request: checksum error\n");
-        krtn = KRB5KRB_AP_ERR_BAD_INTEGRITY;
-        goto cleanup;
-    }
-
-#if REQUIRE_CLIENT_CERT_MATCH
-    /* look up in the KDB to ensure correct client/cert binding */
-    cert_hash = krb5_pkinit_cert_hash_str(&client_cert);
-    if(cert_hash == NULL) {
-        krtn = ENOMEM;
-        goto cleanup;
-    }
-    cert_hash_len = strlen(cert_hash);
-    for(key_dex=0; key_dex<client->n_key_data; key_dex++) {
-        krb5_key_data *key_data = &client->key_data[key_dex];
-        kdcPkinitDebug("--- key %u type[0] %u length[0] %u type[1] %u length[1] %u\n",
-                       key_dex,
-                       key_data->key_data_type[0], key_data->key_data_length[0],
-                       key_data->key_data_type[1], key_data->key_data_length[1]);
-        if(key_data->key_data_type[1] != KRB5_KDB_SALTTYPE_CERTHASH) {
-            continue;
-        }
-
-        /*
-         * Unfortunately this key is stored encrypted even though it's
-         * not sensitive...
-         */
-        krtn = krb5_dbe_decrypt_key_data(context, NULL, key_data,
-                                         &decrypted_key, NULL);
-        if(krtn) {
-            kdcPkinitDebug("verify_pkinit_request: error decrypting cert hash block\n");
-            break;
-        }
-        if((decrypted_key.contents != NULL) &&
-           (cert_hash_len == decrypted_key.length) &&
-           !memcmp(decrypted_key.contents, cert_hash, cert_hash_len)) {
-            cert_match = 1;
-            break;
-        }
-    }
-    if(decrypted_key.contents) {
-        krb5_free_keyblock_contents(context, &decrypted_key);
-    }
-    if(!cert_match) {
-        kdcPkinitDebug("verify_pkinit_request: client cert does not match\n");
-        krtn = KDC_ERR_CLIENT_NOT_TRUSTED;
-        goto cleanup;
-    }
-#endif   /* REQUIRE_CLIENT_CERT_MATCH */
-    krtn = 0;
-    setflag(enc_tkt_reply->flags, TKT_FLG_PRE_AUTH);
-
-cleanup:
-    if(pa_cksum.contents) {
-        free(pa_cksum.contents);
-    }
-    if (tmp_as_req) {
-        krb5_free_kdc_req(context, tmp_as_req);
-    }
-    if (der_req) {
-        krb5_free_data(context, der_req);
-    }
-    if(cert_hash) {
-        free(cert_hash);
-    }
-    if(client_cert.data) {
-        free(client_cert.data);
-    }
-    kdcPkinitDebug("verify_pkinit_request: returning %d\n", (int)krtn);
-    return krtn;
-}
-
-static krb5_error_code return_pkinit_response(
-    krb5_context context,
-    krb5_pa_data * padata,
-    krb5_db_entry *client,
-    krb5_data *req_pkt,
-    krb5_kdc_req *request,
-    krb5_kdc_rep *reply,
-    krb5_key_data *client_key,
-    krb5_keyblock *encrypting_key,
-    krb5_pa_data **send_pa,
-    preauth_get_entry_data_proc pkinit_get_entry_data,
-    void *pa_module_context,
-    void **pa_request_context)
-{
-    krb5_error_code             krtn;
-    krb5_data                   pa_data;
-    krb5_pkinit_signing_cert_t  signing_cert = NULL;
-    krb5_checksum               as_req_checksum = {0};
-    krb5_data                   *encoded_as_req = NULL;
-    krb5int_algorithm_id        *cms_types = NULL;
-    krb5_ui_4                   num_cms_types = 0;
-
-    /* the data we get from the AS-REQ */
-    krb5_ui_4                   nonce = 0;
-    krb5_data                   client_cert = {0};
-
-    /*
-     * Trusted CA list and specific KC cert optionally obtained via
-     * krb5int_pkinit_as_req_parse(). All are DER-encoded
-     * issuerAndSerialNumbers.
-     */
-    krb5_data                   *trusted_CAs = NULL;
-    krb5_ui_4                   num_trusted_CAs;
-    krb5_data                   kdc_cert = {0};
-
-    if (padata == NULL) {
-        /* Client has to send us something */
-        return 0;
-    }
-
-    kdcPkinitDebug("return_pkinit_response\n");
-    pa_data.data = (char *)padata->contents;
-    pa_data.length = padata->length;
-
-    /*
-     * We've already verified; just obtain the fields we need to create a response
-     */
-    krtn = krb5int_pkinit_as_req_parse(context,
-                                       &pa_data,
-                                       NULL, NULL, &nonce,     /* ctime, cusec, nonce */
-                                       NULL, NULL,             /* pa_cksum, cert_status */
-                                       &num_cms_types, &cms_types,
-                                       &client_cert,   /* signer_cert: we encrypt for this */
-                                       /* remaining fields unused (for now) */
-                                       NULL, NULL,     /* num_all_certs, all_certs */
-                                       &num_trusted_CAs, &trusted_CAs,
-                                       &kdc_cert);
-    if(krtn) {
-        kdcPkinitDebug("pa_pk_as_req_parse returned %d; PKINIT aborting.\n",
-                       (int)krtn);
-        goto cleanup;
-    }
-    if(client_cert.data == NULL) {
-        kdcPkinitDebug("pa_pk_as_req_parse failed to give a client_cert; aborting.\n");
-        krtn = KRB5KDC_ERR_PREAUTH_FAILED;
-        goto cleanup;
-    }
-
-    if(krb5_pkinit_get_kdc_cert(num_trusted_CAs, trusted_CAs,
-                                (kdc_cert.data ? &kdc_cert : NULL),
-                                &signing_cert)) {
-        /*
-         * Since get_pkinit_edata was able to obtain *some* KDC cert,
-         * this means that we can't satisfy the client's requirement.
-         * FIXME - particular error status for this?
-         */
-        kdcPkinitDebug("return_pkinit_response: NO appropriate signing cert!\n");
-        krtn = KRB5KDC_ERR_PREAUTH_FAILED;
-        goto cleanup;
-    }
-
-    /*
-     * Cook up keyblock for caller and for outgoing AS-REP.
-     * FIXME how much is known to be valid about encrypting_key?
-     * Will encrypting_key->enctype always be valid here? Seems that
-     * if we allow for clients without a shared secret (i.e. preauth
-     * by PKINIT only) there won't be a valid encrypting_key set up
-     * here for us.
-     */
-    krb5_free_keyblock_contents(context, encrypting_key);
-    krb5_c_make_random_key(context, encrypting_key->enctype, encrypting_key);
-
-    /* calculate checksum of incoming AS-REQ */
-    krtn = encode_krb5_as_req(request, &encoded_as_req);
-    if(krtn) {
-        kdcPkinitDebug("encode_krb5_as_req returned %d; PKINIT aborting.\n", (int)krtn);
-        goto cleanup;
-    }
-    krtn = krb5_c_make_checksum(context, context->kdc_req_sumtype,
-                                encrypting_key, KRB5_KEYUSAGE_TGS_REQ_AUTH_CKSUM,
-                                encoded_as_req, &as_req_checksum);
-    if(krtn) {
-        goto cleanup;
-    }
-
-    /*
-     * FIXME: here we assume that the client has one cert - the one that
-     * signed the AuthPack in the request (and that we therefore obtained from
-     * krb5int_pkinit_as_req_parse()), and the one we're using to encrypt the
-     * ReplyKeyPack with here. This may need rethinking.
-     */
-    krtn = krb5int_pkinit_as_rep_create(context,
-                                        encrypting_key, &as_req_checksum,
-                                        signing_cert, TRUE,
-                                        &client_cert,
-                                        num_cms_types, cms_types,
-                                        num_trusted_CAs, trusted_CAs,
-                                        (kdc_cert.data ? &kdc_cert : NULL),
-                                        &pa_data);
-    if(krtn) {
-        kdcPkinitDebug("pa_pk_as_rep_create returned %d; PKINIT aborting.\n",
-                       (int)krtn);
-        goto cleanup;
-    }
-
-    *send_pa = (krb5_pa_data *)malloc(sizeof(krb5_pa_data));
-    if(*send_pa == NULL) {
-        krtn = ENOMEM;
-        free(pa_data.data);
-        goto cleanup;
-    }
-    (*send_pa)->magic = KV5M_PA_DATA;
-    (*send_pa)->pa_type = KRB5_PADATA_PK_AS_REP;
-    (*send_pa)->length = pa_data.length;
-    (*send_pa)->contents = (krb5_octet *)pa_data.data;
-    krtn = 0;
-
-#if PKINIT_DEBUG
-    fprintf(stderr, "return_pkinit_response: SUCCESS\n");
-    fprintf(stderr, "nonce 0x%x enctype %d keydata %02x %02x %02x %02x...\n",
-            (int)nonce, (int)encrypting_key->enctype,
-            encrypting_key->contents[0], encrypting_key->contents[1],
-            encrypting_key->contents[2], encrypting_key->contents[3]);
-#endif
-
-cleanup:
-    /* all of this was allocd by krb5int_pkinit_as_req_parse() */
-    if(signing_cert) {
-        krb5_pkinit_release_cert(signing_cert);
-    }
-    if(cms_types) {
-        unsigned dex;
-        krb5int_algorithm_id *alg_id;
-
-        for(dex=0; dex<num_cms_types; dex++) {
-            alg_id = &cms_types[dex];
-            if(alg_id->algorithm.data) {
-                free(alg_id->algorithm.data);
-            }
-            if(alg_id->parameters.data) {
-                free(alg_id->parameters.data);
-            }
-        }
-        free(cms_types);
-    }
-    if(trusted_CAs) {
-        unsigned dex;
-        for(dex=0; dex<num_trusted_CAs; dex++) {
-            free(trusted_CAs[dex].data);
-        }
-        free(trusted_CAs);
-    }
-    if(kdc_cert.data) {
-        free(kdc_cert.data);
-    }
-    if(client_cert.data) {
-        free(client_cert.data);
-    }
-    if(encoded_as_req) {
-        krb5_free_data(context, encoded_as_req);
-    }
-    return krtn;
-}
-
-#endif /* APPLE_PKINIT */
 
 /*
  * Returns TRUE if the PAC should be included
@@ -2214,7 +1679,7 @@ return_enc_padata(krb5_context context, krb5_data *req_pkt,
         if (code)
             return code;
     }
-    code = kdc_handle_protected_negotiation(req_pkt, request, reply_key,
+    code = kdc_handle_protected_negotiation(context, req_pkt, request, reply_key,
                                             &reply_encpart->enc_padata);
     if (code)
         goto cleanup;

@@ -57,6 +57,9 @@ krb5_gss_release_cred(minor_status, cred_handle)
     } else
         code1 = 0;
 
+    if (cred->client_keytab)
+        krb5_kt_close(context, cred->client_keytab);
+
 #ifndef LEAN_CLIENT
     if (cred->keytab)
         code2 = krb5_kt_close(context, cred->keytab);
@@ -71,13 +74,13 @@ krb5_gss_release_cred(minor_status, cred_handle)
     if (cred->name)
         kg_release_name(context, &cred->name);
 
+    krb5_free_principal(context, cred->impersonator);
+
     if (cred->req_enctypes)
         free(cred->req_enctypes);
 
-    if (cred->password.data) {
-        zap(cred->password.data, cred->password.length);
-        krb5_free_data_contents(context, &cred->password);
-    }
+    if (cred->password != NULL)
+        zapfree(cred->password, strlen(cred->password));
 
     xfree(cred);
 

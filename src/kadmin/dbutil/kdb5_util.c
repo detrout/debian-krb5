@@ -56,6 +56,7 @@
 #include <stdio.h>
 #include <k5-int.h>
 #include <kadm5/admin.h>
+#include <locale.h>
 #include <adm_proto.h>
 #include <time.h>
 #include "kdb5_util.h"
@@ -84,10 +85,10 @@ void usage()
               "\tcreate  [-s]\n"
               "\tdestroy [-f]\n"
               "\tstash   [-f keyfile]\n"
-              "\tdump    [-old|-ov|-b6|-b7|-r13] [-verbose]\n"
+              "\tdump    [-old|-ov|-b6|-b7|-r13|-r18] [-verbose]\n"
               "\t        [-mkey_convert] [-new_mkey_file mkey_file]\n"
               "\t        [-rev] [-recurse] [filename [princs...]]\n"
-              "\tload    [-old|-ov|-b6|-b7|-r13] [-verbose] [-update] "
+              "\tload    [-old|-ov|-b6|-b7|-r13|-r18] [-verbose] [-update] "
               "filename\n"
               "\tark     [-e etype_list] principal\n"
               "\tadd_mkey [-e etype] [-s]\n"
@@ -106,7 +107,6 @@ void usage()
 
 krb5_keyblock master_keyblock;
 krb5_kvno   master_kvno; /* fetched */
-extern krb5_keylist_node *master_keylist;
 extern krb5_principal master_princ;
 krb5_db_entry *master_entry = NULL;
 int     valid_master_key = 0;
@@ -198,7 +198,7 @@ int main(argc, argv)
     int cmd_argc;
     krb5_error_code retval;
 
-    setlocale(LC_MESSAGES, "");
+    setlocale(LC_ALL, "");
     set_com_err_hook(extended_com_err_fn);
 
     /*
@@ -485,8 +485,7 @@ static int open_db_and_mkey()
     }
 
     if ((retval = krb5_db_fetch_mkey_list(util_context, master_princ,
-                                          &master_keyblock, master_kvno,
-                                          &master_keylist))) {
+                                          &master_keyblock))) {
         com_err(progname, retval, "while getting master key list");
         com_err(progname, 0, "Warning: proceeding without master key list");
         exit_status++;
@@ -501,7 +500,6 @@ static int open_db_and_mkey()
         exit_status++;
         memset(master_keyblock.contents, 0, master_keyblock.length);
         krb5_free_keyblock_contents(util_context, &master_keyblock);
-        krb5_db_free_mkey_list(util_context, master_keylist);
         return(1);
     }
 
@@ -532,7 +530,6 @@ quit()
 
     if (finished)
         return 0;
-    krb5_db_free_mkey_list(util_context, master_keylist);
     retval = krb5_db_fini(util_context);
     memset(master_keyblock.contents, 0, master_keyblock.length);
     finished = TRUE;
@@ -605,7 +602,7 @@ add_random_key(argc, argv)
         free_keysalts = 1;
 
     /* Find the mkey used to protect the existing keys */
-    ret = krb5_dbe_find_mkey(util_context, master_keylist, dbent, &tmp_mkey);
+    ret = krb5_dbe_find_mkey(util_context, dbent, &tmp_mkey);
     if (ret) {
         com_err(me, ret, _("while finding mkey"));
         krb5_db_free_principal(util_context, dbent);

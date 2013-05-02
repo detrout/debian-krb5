@@ -38,6 +38,7 @@
 #include <autoconf.h>
 #include <profile.h>
 #include "pkinit_accessor.h"
+#include "pkinit_trace.h"
 
 /*
  * It is anticipated that all the special checks currently
@@ -115,7 +116,7 @@ static inline void pkiDebug (const char *fmt, ...) { }
 #define OCTETDATA_TO_KRB5DATA(octd, k5d) \
     (k5d)->length = (octd)->length; (k5d)->data = (char *)(octd)->data;
 
-extern const krb5_octet_data dh_oid;
+extern const krb5_data dh_oid;
 
 /*
  * notes about crypto contexts:
@@ -225,6 +226,7 @@ struct _pkinit_req_context {
     pkinit_req_opts *opts;
     pkinit_identity_crypto_context idctx;
     pkinit_identity_opts *idopts;
+    int do_identity_matching;
     krb5_preauthtype pa_type;
     int rfc6112_kdc;
 };
@@ -283,6 +285,8 @@ krb5_error_code pkinit_identity_initialize
 	 pkinit_req_crypto_context req_cryptoctx,	/* IN */
 	 pkinit_identity_opts *idopts,			/* IN */
 	 pkinit_identity_crypto_context id_cryptoctx,	/* IN/OUT */
+	 krb5_clpreauth_callbacks cb,			/* IN/OUT */
+	 krb5_clpreauth_rock rock,			/* IN/OUT */
 	 int do_matching,				/* IN */
 	 krb5_principal princ);				/* IN (optional) */
 
@@ -316,13 +320,11 @@ void free_krb5_auth_pack_draft9(krb5_context, krb5_auth_pack_draft9 **in);
 void free_krb5_pa_pk_as_rep(krb5_pa_pk_as_rep **in);
 void free_krb5_pa_pk_as_rep_draft9(krb5_pa_pk_as_rep_draft9 **in);
 void free_krb5_external_principal_identifier(krb5_external_principal_identifier ***in);
-void free_krb5_trusted_ca(krb5_trusted_ca ***in);
-void free_krb5_typed_data(krb5_typed_data ***in);
 void free_krb5_algorithm_identifiers(krb5_algorithm_identifier ***in);
 void free_krb5_algorithm_identifier(krb5_algorithm_identifier *in);
 void free_krb5_kdc_dh_key_info(krb5_kdc_dh_key_info **in);
 void free_krb5_subject_pk_info(krb5_subject_pk_info **in);
-krb5_error_code pkinit_copy_krb5_octet_data(krb5_octet_data *dst, const krb5_octet_data *src);
+krb5_error_code pkinit_copy_krb5_data(krb5_data *dst, const krb5_data *src);
 
 
 /*

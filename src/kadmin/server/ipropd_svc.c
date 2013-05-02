@@ -35,6 +35,9 @@ extern gss_name_t rqst2name(struct svc_req *rqstp);
 extern void *global_server_handle;
 extern int nofork;
 extern short l_port;
+extern char *kdb5_util;
+extern char *kprop;
+extern char *dump_file;
 static char abuf[33];
 
 /* Result is stored in a static buffer and is invalidated by the next call. */
@@ -57,7 +60,13 @@ static char *reply_unknown_str	= "<UNKNOWN_CODE>";
 #ifdef	DPRINT
 #undef	DPRINT
 #endif
-#define	DPRINT(i) if (nofork) printf i
+#define	DPRINT(...)				\
+    do {					\
+	if (nofork) {				\
+	    fprintf(stderr, __VA_ARGS__);	\
+	    fflush(stderr);			\
+	}					\
+    } while (0)
 
 
 static void
@@ -138,8 +147,8 @@ iprop_get_updates_1_svc(kdb_last_t *arg, struct svc_req *rqstp)
     /* default return code */
     ret.ret = UPDATE_ERROR;
 
-    DPRINT(("%s: start, last_sno=%lu\n", whoami,
-	    (unsigned long) arg->last_sno));
+    DPRINT("%s: start, last_sno=%lu\n", whoami,
+	    (unsigned long)arg->last_sno);
 
     if (!handle) {
 	krb5_klog_syslog(LOG_ERR,
@@ -169,8 +178,8 @@ iprop_get_updates_1_svc(kdb_last_t *arg, struct svc_req *rqstp)
 	}
     }
 
-    DPRINT(("%s: clprinc=`%s'\n\tsvcprinc=`%s'\n",
-	    whoami, client_name, service_name));
+    DPRINT("%s: clprinc=`%s'\n\tsvcprinc=`%s'\n", whoami, client_name,
+	   service_name);
 
     if (!kadm5int_acl_check(handle->context,
 			    rqst2name(rqstp),
@@ -178,6 +187,9 @@ iprop_get_updates_1_svc(kdb_last_t *arg, struct svc_req *rqstp)
 			    NULL,
 			    NULL)) {
 	ret.ret = UPDATE_PERM_DENIED;
+
+	DPRINT("%s: PERMISSION DENIED: clprinc=`%s'\n\tsvcprinc=`%s'\n",
+		whoami, client_name, service_name);
 
 	krb5_klog_syslog(LOG_NOTICE, LOG_UNAUTH, whoami,
 			 client_name, service_name,
@@ -199,6 +211,11 @@ iprop_get_updates_1_svc(kdb_last_t *arg, struct svc_req *rqstp)
 			replystr(ret.ret),
 			(unsigned long)arg->last_sno);
     }
+
+    DPRINT("%s: request %s %s\n\tclprinc=`%s'\n\tsvcprinc=`%s'\n",
+	   whoami, obuf,
+	   ((kret == 0) ? "success" : error_message(kret)),
+	   client_name, service_name);
 
     krb5_klog_syslog(LOG_NOTICE,
 		     _("Request: %s, %s, %s, client=%s, service=%s, addr=%s"),
@@ -246,10 +263,10 @@ static kdb_fullresync_result_t *
 ipropx_resync(uint32_t vers, struct svc_req *rqstp)
 {
     static kdb_fullresync_result_t ret;
-    char *tmpf = 0;
     char *ubuf = 0;
     char clhost[MAXHOSTNAMELEN] = {0};
     int pret, fret;
+    FILE *p;
     kadm5_server_handle_t handle = global_server_handle;
     OM_uint32 min_stat;
     gss_name_t name = NULL;
@@ -273,12 +290,13 @@ ipropx_resync(uint32_t vers, struct svc_req *rqstp)
 	goto out;
     }
 
-    DPRINT(("%s: start\n", whoami));
+    DPRINT("%s: start\n", whoami);
 
     {
 	gss_buffer_desc client_desc, service_desc;
 
 	if (setup_gss_names(rqstp, &client_desc, &service_desc) < 0) {
+	    DPRINT("%s: setup_gss_names failed\n", whoami);
 	    krb5_klog_syslog(LOG_ERR,
 			     _("%s: setup_gss_names failed"),
 			     whoami);
@@ -289,6 +307,7 @@ ipropx_resync(uint32_t vers, struct svc_req *rqstp)
 	if (client_name == NULL || service_name == NULL) {
 	    free(client_name);
 	    free(service_name);
+	    DPRINT("%s: out of memory\n", whoami);
 	    krb5_klog_syslog(LOG_ERR,
 			     _("%s: out of memory recording principal names"),
 			     whoami);
@@ -296,8 +315,8 @@ ipropx_resync(uint32_t vers, struct svc_req *rqstp)
 	}
     }
 
-    DPRINT(("%s: clprinc=`%s'\n\tsvcprinc=`%s'\n",
-	    whoami, client_name, service_name));
+    DPRINT("%s: clprinc=`%s'\n\tsvcprinc=`%s'\n",
+	    whoami, client_name, service_name);
 
     if (!kadm5int_acl_check(handle->context,
 			    rqst2name(rqstp),
@@ -306,6 +325,7 @@ ipropx_resync(uint32_t vers, struct svc_req *rqstp)
 			    NULL)) {
 	ret.ret = UPDATE_PERM_DENIED;
 
+	DPRINT("%s: Permission denied\n", whoami);
 	krb5_klog_syslog(LOG_NOTICE, LOG_UNAUTH, whoami,
 			 client_name, service_name,
 			 client_addr(rqstp));
@@ -320,23 +340,21 @@ ipropx_resync(uint32_t vers, struct svc_req *rqstp)
     }
 
     /*
-     * construct db dump file name; kprop style name + clnt fqdn
-     */
-    if (asprintf(&tmpf, "%s_%s", KPROP_DEFAULT_FILE, clhost) < 0) {
-	krb5_klog_syslog(LOG_ERR,
-			 _("%s: unable to construct db dump file name; out of memory"),
-			 whoami);
-	goto out;
-    }
-
-    /*
-     * note the -i; modified version of kdb5_util dump format
+     * Note the -i; modified version of kdb5_util dump format
      * to include sno (serial number). This argument is now
      * versioned (-i0 for legacy dump format, -i1 for ipropx
-     * version 1 format, etc)
+     * version 1 format, etc).
+     *
+     * The -c option ("conditional") causes the dump to dump only if no
+     * dump already exists or that dump is not in ipropx format, or the
+     * sno and timestamp in the header of that dump are outside the
+     * ulog.  This allows us to share a single global dump with all
+     * slaves, since it's OK to share an older dump, as long as its sno
+     * and timestamp are in the ulog (then the slaves can get the
+     * subsequent updates very iprop).
      */
-    if (asprintf(&ubuf, "%s dump -i%d %s </dev/null 2>&1",
-		 KPROPD_DEFAULT_KDB5_UTIL, vers, tmpf) < 0) {
+    if (asprintf(&ubuf, "%s dump -i%d -c %s",
+		 kdb5_util, vers, dump_file) < 0) {
 	krb5_klog_syslog(LOG_ERR,
 			 _("%s: cannot construct kdb5 util dump string too long; out of memory"),
 			 whoami);
@@ -349,13 +367,14 @@ ipropx_resync(uint32_t vers, struct svc_req *rqstp)
      * acts like a callback to the slave).
      */
     fret = fork();
-    DPRINT(("%s: fork=%d (%d)\n", whoami, fret, getpid()));
+    DPRINT("%s: fork=%d (%d)\n", whoami, fret, getpid());
 
     switch (fret) {
     case -1: /* error */
 	if (nofork) {
 	    perror(whoami);
 	}
+	DPRINT("%s: fork failed\n", whoami);
 	krb5_klog_syslog(LOG_ERR,
 			 _("%s: fork failed: %s"),
 			 whoami,
@@ -363,12 +382,18 @@ ipropx_resync(uint32_t vers, struct svc_req *rqstp)
 	goto out;
 
     case 0: /* child */
-	DPRINT(("%s: run `%s' ...\n", whoami, ubuf));
+	DPRINT("%s: run `%s' ...\n", whoami, ubuf);
 	(void) signal(SIGCHLD, SIG_DFL);
 	/* run kdb5_util(1M) dump for IProp */
-	/* XXX popen can return NULL; is pclose(NULL) okay?  */
-	pret = pclose(popen(ubuf, "w"));
-	DPRINT(("%s: pclose=%d\n", whoami, pret));
+	p = popen(ubuf, "w");
+	if (p == NULL) {
+	    krb5_klog_syslog(LOG_ERR,
+			     _("%s: popen failed: %s"),
+			     whoami, error_message(errno));
+	    _exit(1);
+	}
+	pret = pclose(p);
+	DPRINT("%s: pclose=%d\n", whoami, pret);
 	if (pret != 0) {
 	    /* XXX popen/pclose may not set errno
 	       properly, and the error could be from the
@@ -383,26 +408,21 @@ ipropx_resync(uint32_t vers, struct svc_req *rqstp)
 	    _exit(1);
 	}
 
-	DPRINT(("%s: exec `kprop -f %s %s' ...\n",
-		whoami, tmpf, clhost));
+	DPRINT("%s: exec `kprop -f %s %s' ...\n",
+		whoami, dump_file, clhost);
 	/* XXX Yuck!  */
-	if (getenv("KPROP_PORT"))
-	    pret = execl(KPROPD_DEFAULT_KPROP, "kprop", "-f", tmpf,
-			 "-P", getenv("KPROP_PORT"),
-			 clhost, NULL);
-	else
-	    pret = execl(KPROPD_DEFAULT_KPROP, "kprop", "-f", tmpf,
-			 clhost, NULL);
-	if (pret == -1) {
-	    if (nofork) {
-		perror(whoami);
-	    }
-	    krb5_klog_syslog(LOG_ERR,
-			     _("%s: exec failed: %s"),
-			     whoami,
-			     error_message(errno));
-	    _exit(1);
+	if (getenv("KPROP_PORT")) {
+	    pret = execl(kprop, "kprop", "-f", dump_file, "-P",
+			 getenv("KPROP_PORT"), clhost, NULL);
+	} else {
+	    pret = execl(kprop, "kprop", "-f", dump_file, clhost, NULL);
 	}
+	perror(whoami);
+	krb5_klog_syslog(LOG_ERR,
+			 _("%s: exec failed: %s"),
+			 whoami,
+			 error_message(errno));
+	_exit(1);
 
     default: /* parent */
 	ret.ret = UPDATE_OK;
@@ -411,6 +431,9 @@ ipropx_resync(uint32_t vers, struct svc_req *rqstp)
 	ret.lastentry.last_time.seconds = 0;
 	ret.lastentry.last_time.useconds = 0;
 
+	DPRINT("%s: spawned resync process %d, client=%s, "
+		"service=%s, addr=%s\n", whoami, fret, client_name,
+		service_name, client_addr(rqstp));
 	krb5_klog_syslog(LOG_NOTICE,
 			 _("Request: %s, spawned resync process %d, client=%s, service=%s, addr=%s"),
 			 whoami, fret,
@@ -427,7 +450,6 @@ out:
     free(service_name);
     if (name)
 	gss_release_name(&min_stat, &name);
-    free(tmpf);
     free(ubuf);
     return (&ret);
 }

@@ -81,9 +81,6 @@ krb5_error_code krb5_make_full_ipaddr(krb5_context,
 krb5_error_code krb5_try_realm_txt_rr(const char *, const char *,
                                       char **realm);
 
-/* Obsolete interface - leave prototype here until code removed */
-krb5_error_code krb5_secure_config_files(krb5_context ctx);
-
 void krb5int_debug_fprint (const char *fmt, ...);
 
 int _krb5_use_dns_realm (krb5_context);
@@ -106,6 +103,12 @@ krb5_error_code krb5int_get_fq_local_hostname(char *, size_t);
 int krb5int_net_writev (krb5_context, int, sg_buf *, int);
 
 int k5_getcurtime(struct timeval *tvp);
+
+krb5_error_code k5_expand_path_tokens(krb5_context context,
+                                      const char *path_in, char **path_out);
+krb5_error_code k5_expand_path_tokens_extra(krb5_context context,
+                                            const char *path_in,
+                                            char **path_out, ...);
 
 #include "k5-thread.h"
 extern k5_mutex_t krb5int_us_time_mutex;

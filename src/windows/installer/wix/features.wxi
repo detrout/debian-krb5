@@ -55,6 +55,16 @@
                     <?include runtime_debug.wxi?>
 	        </Feature>
 	    <?endif?>
+      <?if $(var.Platform)="x64"?>
+          <ComponentRef Id="cmf_comerr64_dll" />
+          <ComponentRef Id="cmf_gssapi64_dll" />
+          <ComponentRef Id="cmf_k5sprt64_dll" />
+          <ComponentRef Id="cmf_krb5_64_dll" />
+          <ComponentRef Id="cmf_krbcc64_dll" />
+          <ComponentRef Id="cmf_leashw64_dll" />
+          <ComponentRef Id="cmf_wshelp64_dll" />
+          <ComponentRef Id="cmf_xpprof64_dll" />
+       <?endif?>
 
             <ComponentRef Id="cmf_comerr32_dll" />
             <ComponentRef Id="cmf_gss_client_exe" />
@@ -116,8 +126,6 @@
             <ComponentRef Id="rcm_leashdll_16" />
             <ComponentRef Id="rcm_leashdll_17" />
             
-            <ComponentRef Id="cmf_psapi_dll" />
-            
             <ComponentRef Id="cmf_krb5_ini" />
             
             <ComponentRef Id="rcm_common" />
@@ -125,11 +133,10 @@
             
             <Feature Id="feaKfwLeashStartup" AllowAdvertise="no" Display="hidden" Level="130">
                 <Condition Level="30">LEASHAUTOSTART = 1</Condition>
-                <?if $(var.Platform) = "Intel"?>
-<!--                        <ComponentRef Id="csc_LeashStartup" /> -->
-                <?endif?>
+                <ComponentRef Id="csc_LeashStartup" />
             </Feature>
-            <ComponentRef Id="cmf_remove_folder" />
+            <ComponentRef Id="SMshortcut" />
+            <ComponentRef Id="Dshortcut" />
             <?include runtime.wxi?>
         </Feature> <!-- /feaKfwClient -->
         

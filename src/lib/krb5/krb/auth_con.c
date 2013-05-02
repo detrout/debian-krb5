@@ -315,18 +315,18 @@ krb5_error_code KRB5_CALLCONV
 krb5_auth_con_initivector(krb5_context context, krb5_auth_context auth_context)
 {
     krb5_error_code ret;
-    krb5_enctype enctype;
+    krb5_data cstate;
 
     if (auth_context->key) {
-        size_t blocksize;
-
-        enctype = krb5_k_key_enctype(context, auth_context->key);
-        if ((ret = krb5_c_block_size(context, enctype, &blocksize)))
-            return(ret);
-        if ((auth_context->i_vector = (krb5_pointer)calloc(1,blocksize))) {
-            return 0;
-        }
-        return ENOMEM;
+        ret = krb5_c_init_state(context, &auth_context->key->keyblock, 0,
+                                &cstate);
+        if (ret)
+            return ret;
+        auth_context->i_vector = (krb5_pointer)calloc(1,cstate.length);
+        krb5_c_free_state(context, &auth_context->key->keyblock, &cstate);
+        if (auth_context->i_vector == NULL)
+            return ENOMEM;
+        return 0;
     }
     return EINVAL; /* XXX need an error for no keyblock */
 }
@@ -381,7 +381,7 @@ krb5_auth_con_setpermetypes(krb5_context context,
     krb5_enctype *newpe;
     krb5_error_code ret;
 
-    ret = krb5int_copy_etypes(permetypes, &newpe);
+    ret = k5_copy_etypes(permetypes, &newpe);
     if (ret != 0)
         return ret;
 
@@ -398,7 +398,7 @@ krb5_auth_con_getpermetypes(krb5_context context,
     *permetypes = NULL;
     if (auth_context->permitted_etypes == NULL)
         return 0;
-    return krb5int_copy_etypes(auth_context->permitted_etypes, permetypes);
+    return k5_copy_etypes(auth_context->permitted_etypes, permetypes);
 }
 
 krb5_error_code KRB5_CALLCONV

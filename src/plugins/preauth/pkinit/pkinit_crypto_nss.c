@@ -38,6 +38,7 @@
 #include <errno.h>
 
 #include "k5-platform.h"
+#include "k5-buf.h"
 #include "k5-utf8.h"
 #include "krb5.h"
 
@@ -96,6 +97,8 @@ static krb5_error_code cert_retrieve_cert_sans(krb5_context context,
                                                krb5_principal **pkinit_sans,
                                                krb5_principal **upn_sans,
                                                unsigned char ***kdc_hostname);
+static void crypto_update_signer_identity(krb5_context,
+                                          pkinit_identity_crypto_context);
 
 /* DomainParameters: RFC 2459, 7.3.2. */
 struct domain_parameters {
@@ -119,11 +122,25 @@ struct _pkinit_req_crypto_context {
 
 struct _pkinit_identity_crypto_context {
     PLArenaPool *pool;
+    const char *identity;
     SECMODModule *pem_module;   /* used for FILE: and DIR: */
-    SECMODModule **id_modules;  /* used for PKCS11: */
-    PK11SlotInfo **id_userdbs;  /* used for NSS: */
-    PK11SlotInfo *id_p12_slot;  /* used for PKCS12: */
-    PK11GenericObject **id_objects;     /* used with FILE: and DIR: */
+    struct _pkinit_identity_crypto_module {
+        char *name;
+        SECMODModule *module;
+    } **id_modules;             /* used for PKCS11: */
+    struct _pkinit_identity_crypto_userdb {
+        char *name;
+        PK11SlotInfo *userdb;
+    } **id_userdbs;             /* used for NSS: */
+    struct _pkinit_identity_crypto_p12slot {
+        char *p12name;
+        PK11SlotInfo *slot;
+    } id_p12_slot;             /* used for PKCS12: */
+    struct _pkinit_identity_crypto_file {
+        char *name;
+        PK11GenericObject *obj;
+        CERTCertificate *cert;
+    } **id_objects;             /* used with FILE: and DIR: */
     SECItem **id_crls;
     CERTCertList *id_certs, *ca_certs;
     CERTCertificate *id_cert;
@@ -603,6 +620,7 @@ crypto_pwfn(const char *what, PRBool retry, void *arg)
     ret = (*id->pwcb_args.prompter)(id->pwcb_args.context,
                                     id->pwcb_args.prompter_data,
                                     what, answer, 1, &prompt);
+    (*k5int_set_prompt_types)(id->pwcb_args.context, NULL);
     answer = NULL;
     if ((ret == 0) && (reply.data != NULL)) {
         /* The result will be freed with PR_Free, so return a copy. */
@@ -680,7 +698,7 @@ crypto_get_p12_slot(struct _pkinit_identity_crypto_context *id)
     size_t spec_size;
     int attempts;
 
-    if (id->id_p12_slot == NULL) {
+    if (id->id_p12_slot.slot == NULL) {
         configdir = DEFAULT_CONFIGDIR;
 #ifdef PKCS12_HACK
         /* Figure out where to put the temporary userdb. */
@@ -709,7 +727,7 @@ crypto_get_p12_slot(struct _pkinit_identity_crypto_context *id)
             else
                 snprintf(spec, spec_size, "configDir='%s' flags=readOnly",
                          configdir);
-            id->id_p12_slot = SECMOD_OpenUserDB(spec);
+            id->id_p12_slot.slot = SECMOD_OpenUserDB(spec);
         }
 #ifdef PKCS12_HACK
         if (strcmp(configdir, DEFAULT_CONFIGDIR) != 0) {
@@ -717,9 +735,9 @@ crypto_get_p12_slot(struct _pkinit_identity_crypto_context *id)
             struct dirent *ent;
             char *path;
             /* First, initialize the slot. */
-            if (id->id_p12_slot != NULL)
-                if (PK11_NeedUserInit(id->id_p12_slot))
-                    PK11_InitPin(id->id_p12_slot, "", "");
+            if (id->id_p12_slot.slot != NULL)
+                if (PK11_NeedUserInit(id->id_p12_slot.slot))
+                    PK11_InitPin(id->id_p12_slot.slot, "", "");
             /* Scan the directory, deleting all of the contents. */
             dir = opendir(configdir);
             if (dir == NULL)
@@ -744,7 +762,7 @@ crypto_get_p12_slot(struct _pkinit_identity_crypto_context *id)
         }
     }
 #endif
-    return id->id_p12_slot;
+    return id->id_p12_slot.slot;
 }
 
 /* Close the slot which we've been using for holding imported PKCS12
@@ -752,7 +770,7 @@ crypto_get_p12_slot(struct _pkinit_identity_crypto_context *id)
 static int
 crypto_close_p12_slot(struct _pkinit_identity_crypto_context *id)
 {
-    SECMOD_CloseUserDB(id->id_p12_slot);
+    SECMOD_CloseUserDB(id->id_p12_slot.slot);
     return 0;
 }
 
@@ -769,18 +787,21 @@ pkinit_fini_identity_crypto(pkinit_identity_crypto_context id_cryptoctx)
     CERT_DestroyCertList(id_cryptoctx->ca_certs);
     CERT_DestroyCertList(id_cryptoctx->id_certs);
     if (id_cryptoctx->id_objects != NULL)
-        for (i = 0; id_cryptoctx->id_objects[i] != NULL; i++)
-            PK11_DestroyGenericObjects(id_cryptoctx->id_objects[i]);
-    if (id_cryptoctx->id_p12_slot != NULL)
+        for (i = 0; id_cryptoctx->id_objects[i] != NULL; i++) {
+            PK11_DestroyGenericObjects(id_cryptoctx->id_objects[i]->obj);
+            if (id_cryptoctx->id_objects[i]->cert != NULL)
+                CERT_DestroyCertificate(id_cryptoctx->id_objects[i]->cert);
+        }
+    if (id_cryptoctx->id_p12_slot.slot != NULL)
         if ((i = crypto_close_p12_slot(id_cryptoctx)) != 0)
             pkiDebug("%s: error closing pkcs12 slot: %s\n",
                      __FUNCTION__, strerror(i));
     if (id_cryptoctx->id_userdbs != NULL)
         for (i = 0; id_cryptoctx->id_userdbs[i] != NULL; i++)
-            SECMOD_CloseUserDB(id_cryptoctx->id_userdbs[i]);
+            SECMOD_CloseUserDB(id_cryptoctx->id_userdbs[i]->userdb);
     if (id_cryptoctx->id_modules != NULL)
         for (i = 0; id_cryptoctx->id_modules[i] != NULL; i++)
-            SECMOD_UnloadUserModule(id_cryptoctx->id_modules[i]);
+            SECMOD_UnloadUserModule(id_cryptoctx->id_modules[i]->module);
     if (id_cryptoctx->id_crls != NULL)
         for (i = 0; id_cryptoctx->id_crls[i] != NULL; i++)
             CERT_UncacheCRL(CERT_GetDefaultCertDB(), id_cryptoctx->id_crls[i]);
@@ -950,26 +971,21 @@ secitem_to_dh_pubval(SECItem *item, unsigned char **out, unsigned int *len)
     return i;
 }
 
-/* Decode a bitstring that contains an unsigned integer, and return just the
- * bits that make up that integer. */
+/* Decode a DER unsigned integer, and return just the bits that make up that
+ * integer. */
 static int
 secitem_from_dh_pubval(PLArenaPool *pool,
                        unsigned char *dh_pubkey, unsigned int dh_pubkey_len,
                        SECItem *bits_out)
 {
-    SECItem tmp, uinteger;
+    SECItem tmp;
 
     tmp.data = dh_pubkey;
     tmp.len = dh_pubkey_len;
-    memset(&uinteger, 0, sizeof(uinteger));
-    if (SEC_ASN1DecodeItem(pool, &uinteger,
-                           SEC_ASN1_GET(SEC_BitStringTemplate),
-                           &tmp) != SECSuccess)
-        return ENOMEM;
     memset(bits_out, 0, sizeof(*bits_out));
     if (SEC_ASN1DecodeItem(pool, bits_out,
                            SEC_ASN1_GET(SEC_IntegerTemplate),
-                           &uinteger) != SECSuccess)
+                           &tmp) != SECSuccess)
         return ENOMEM;
     return 0;
 }
@@ -1531,7 +1547,7 @@ server_check_dh(krb5_context context,
                 pkinit_plg_crypto_context plg_cryptoctx,
                 pkinit_req_crypto_context req_cryptoctx,
                 pkinit_identity_crypto_context id_cryptoctx,
-                krb5_octet_data *dh_params, int minbits)
+                krb5_data *dh_params, int minbits)
 {
     PLArenaPool *pool;
     SECItem item;
@@ -1540,7 +1556,7 @@ server_check_dh(krb5_context context,
     if (pool == NULL)
         return ENOMEM;
 
-    item.data = dh_params->data;
+    item.data = (unsigned char *)dh_params->data;
     item.len = dh_params->length;
     memset(&req_cryptoctx->client_dh_params, 0,
            sizeof(req_cryptoctx->client_dh_params));
@@ -1757,7 +1773,8 @@ create_krb5_supportedCMSTypes(krb5_context context,
         memset(id, 0, sizeof(*id));
         ids[i] = id;
         oid = SECOID_FindOIDByTag(oids[i]);
-        if (secitem_to_buf_len(&oid->oid, &id->algorithm.data,
+        if (secitem_to_buf_len(&oid->oid,
+                               (unsigned char **)&id->algorithm.data,
                                &id->algorithm.length) != 0) {
             free(ids[i]);
             free_n_algorithm_identifiers(ids, i - 1);
@@ -1768,18 +1785,6 @@ create_krb5_supportedCMSTypes(krb5_context context,
     *supportedCMSTypes = ids;
     return 0;
 }
-
-#if 0
-krb5_error_code
-create_krb5_trustedCas(krb5_context context,
-                       pkinit_plg_crypto_context plg_cryptoctx,
-                       pkinit_req_crypto_context req_cryptoctx,
-                       pkinit_identity_crypto_context id_cryptoctx,
-                       int flag, krb5_trusted_ca ***trustedCas)
-{
-    return ENOSYS;
-}
-#endif
 
 /* Populate a list of trusted certifiers with the list of the root certificates
  * that we trust. */
@@ -1841,9 +1846,11 @@ create_krb5_trustedCertifiers(krb5_context context,
              * of the pkinit module. */
             if ((node->cert->keyIDGenerated ?
                  secitem_to_buf_len(&node->cert->derSubject,
+                                    (unsigned char **)
                                     &id->subjectName.data,
                                     &id->subjectName.length) :
                  secitem_to_buf_len(&node->cert->subjectKeyID,
+                                    (unsigned char **)
                                     &id->subjectKeyIdentifier.data,
                                     &id->subjectKeyIdentifier.length)) != 0) {
                 /* Free the earlier items. */
@@ -2039,6 +2046,49 @@ cert_load_certs_with_keys_from_slot(krb5_context context,
     return status;
 }
 
+static char *
+reassemble_pkcs11_name(PLArenaPool *pool, pkinit_identity_opts *idopts)
+{
+    struct k5buf buf;
+    int n = 0;
+    char *ret;
+
+    krb5int_buf_init_dynamic(&buf);
+    krb5int_buf_add(&buf, "PKCS11:");
+    n = 0;
+    if (idopts->p11_module_name != NULL) {
+        krb5int_buf_add_fmt(&buf, "%smodule_name=%s",
+                            n++ ? "," : "",
+                            idopts->p11_module_name);
+    }
+    if (idopts->token_label != NULL) {
+        krb5int_buf_add_fmt(&buf, "%stoken=%s",
+                            n++ ? "," : "",
+                            idopts->token_label);
+    }
+    if (idopts->cert_label != NULL) {
+        krb5int_buf_add_fmt(&buf, "%scertlabel=%s",
+                            n++ ? "," : "",
+                            idopts->cert_label);
+    }
+    if (idopts->cert_id_string != NULL) {
+        krb5int_buf_add_fmt(&buf, "%scertid=%s",
+                            n++ ? "," : "",
+                            idopts->cert_id_string);
+    }
+    if (idopts->slotid != PK_NOSLOT) {
+        krb5int_buf_add_fmt(&buf, "%sslotid=%ld",
+                            n++ ? "," : "",
+                            (long)idopts->slotid);
+    }
+    if (krb5int_buf_len(&buf) >= 0)
+        ret = PORT_ArenaStrdup(pool, krb5int_buf_data(&buf));
+    else
+        ret = NULL;
+    krb5int_free_buf(&buf);
+    return ret;
+}
+
 static SECStatus
 crypto_load_pkcs11(krb5_context context,
                    pkinit_plg_crypto_context plg_cryptoctx,
@@ -2046,7 +2096,7 @@ crypto_load_pkcs11(krb5_context context,
                    pkinit_identity_opts *idopts,
                    pkinit_identity_crypto_context id_cryptoctx)
 {
-    SECMODModule **id_modules, *module;
+    struct _pkinit_identity_crypto_module **id_modules, *module;
     PK11SlotInfo *slot;
     char *spec;
     size_t spec_size;
@@ -2076,8 +2126,9 @@ crypto_load_pkcs11(krb5_context context,
     if (id_cryptoctx->id_modules != NULL) {
         for (i = 0; id_cryptoctx->id_modules[i] != NULL; i++)
             continue;
-    } else
+    } else {
         i = 0;
+    }
 
     /* Allocate a bigger list. */
     id_modules = PORT_ArenaZAlloc(id_cryptoctx->pool,
@@ -2086,19 +2137,23 @@ crypto_load_pkcs11(krb5_context context,
         id_modules[j] = id_cryptoctx->id_modules[j];
 
     /* Actually load the module. */
-    module = SECMOD_LoadUserModule(spec, NULL, PR_FALSE);
-    if (module == NULL) {
+    module = PORT_ArenaZAlloc(id_cryptoctx->pool, sizeof(*module));
+    if (module == NULL)
+        return SECFailure;
+    module->name = reassemble_pkcs11_name(id_cryptoctx->pool, idopts);
+    module->module = SECMOD_LoadUserModule(spec, NULL, PR_FALSE);
+    if (module->module == NULL) {
         pkiDebug("%s: error loading PKCS11 module \"%s\"",
                  __FUNCTION__, idopts->p11_module_name);
         return SECFailure;
     }
-    if (!module->loaded) {
+    if (!module->module->loaded) {
         pkiDebug("%s: error really loading PKCS11 module \"%s\"",
                  __FUNCTION__, idopts->p11_module_name);
-        SECMOD_UnloadUserModule(module);
+        SECMOD_UnloadUserModule(module->module);
         return SECFailure;
     }
-    SECMOD_UpdateSlotList(module);
+    SECMOD_UpdateSlotList(module->module);
     pkiDebug("%s: loaded PKCS11 module \"%s\"\n", __FUNCTION__,
              idopts->p11_module_name);
 
@@ -2110,7 +2165,8 @@ crypto_load_pkcs11(krb5_context context,
     /* Walk the list of slots in the module. */
     status = SECFailure;
     for (i = 0;
-         (i < module->slotCount) && ((slot = module->slots[i]) != NULL);
+         (i < module->module->slotCount) &&
+         ((slot = module->module->slots[i]) != NULL);
          i++) {
         if (idopts->token_label != NULL) {
             label = idopts->token_label;
@@ -2259,6 +2315,18 @@ crypto_nickname_c_cb(SECItem *old_nickname, PRBool *cancel, void *arg)
     return new_nickname;
 }
 
+static char *
+reassemble_pkcs12_name(PLArenaPool *pool, const char *filename)
+{
+    char *tmp, *ret;
+
+    if (asprintf(&tmp, "PKCS12:%s", filename) < 0)
+        return NULL;
+    ret = PORT_ArenaStrdup(pool, tmp);
+    free(tmp);
+    return ret;
+}
+
 static SECStatus
 crypto_load_pkcs12(krb5_context context,
                    pkinit_plg_crypto_context plg_cryptoctx,
@@ -2375,6 +2443,8 @@ crypto_load_pkcs12(krb5_context context,
             free(password.data);
         return SECFailure;
     }
+    id_cryptoctx->id_p12_slot.p12name =
+        reassemble_pkcs12_name(id_cryptoctx->pool, name);
     pkiDebug("%s: imported PKCS12 bundle \"%s\"\n", __FUNCTION__, name);
     SEC_PKCS12DecoderFinish(ctx);
     if (password.data != emptypwd)
@@ -2398,6 +2468,24 @@ crypto_set_attributes(CK_ATTRIBUTE *attr,
     attr->ulValueLen = ulValueLen;
 }
 
+static char *
+reassemble_files_name(PLArenaPool *pool, const char *certfile,
+                      const char *keyfile)
+{
+    char *tmp, *ret;
+
+    if (keyfile != NULL) {
+        if (asprintf(&tmp, "FILE:%s,%s", certfile, keyfile) < 0)
+            return NULL;
+    } else {
+        if (asprintf(&tmp, "FILE:%s", certfile) < 0)
+            return NULL;
+    }
+    ret = PORT_ArenaStrdup(pool, tmp);
+    free(tmp);
+    return ret;
+}
+
 /* Load keys, certs, and/or CRLs from files. */
 static SECStatus
 crypto_load_files(krb5_context context,
@@ -2410,11 +2498,12 @@ crypto_load_files(krb5_context context,
                   pkinit_identity_crypto_context id_cryptoctx)
 {
     PK11SlotInfo *slot;
-    PK11GenericObject *obj, **id_objects;
+    struct _pkinit_identity_crypto_file *obj, **id_objects;
     PRBool permanent, match;
     CERTCertificate *cert;
     CERTCertList *before, *after;
     CERTCertListNode *anode, *bnode;
+    SECKEYPrivateKey *key;
     CK_ATTRIBUTE attrs[4];
     CK_BBOOL cktrue = CK_TRUE, cktrust;
     CK_OBJECT_CLASS keyclass = CKO_PRIVATE_KEY, certclass = CKO_CERTIFICATE;
@@ -2450,8 +2539,11 @@ crypto_load_files(krb5_context context,
         crypto_set_attributes(&attrs[n_attrs++], CKA_LABEL,
                               (char *) keyfile, strlen(keyfile) + 1);
         permanent = PR_FALSE;   /* set lifetime to "session" */
-        obj = PK11_CreateGenericObject(slot, attrs, n_attrs, permanent);
-        if (obj == NULL) {
+        obj = PORT_ArenaZAlloc(id_cryptoctx->pool, sizeof(*obj));
+        if (obj == NULL)
+            return SECFailure;
+        obj->obj = PK11_CreateGenericObject(slot, attrs, n_attrs, permanent);
+        if (obj->obj == NULL) {
             pkiDebug("%s: error loading key \"%s\"\n", __FUNCTION__, keyfile);
             status = SECFailure;
         } else {
@@ -2491,8 +2583,13 @@ crypto_load_files(krb5_context context,
         crypto_set_attributes(&attrs[n_attrs++], CKA_TRUST,
                               &cktrust, sizeof(cktrust));
         permanent = PR_FALSE;   /* set lifetime to "session" */
-        obj = PK11_CreateGenericObject(slot, attrs, n_attrs, permanent);
-        if (obj == NULL) {
+        obj = PORT_ArenaZAlloc(id_cryptoctx->pool, sizeof(*obj));
+        if (obj == NULL)
+            return SECFailure;
+        obj->name = reassemble_files_name(id_cryptoctx->pool,
+                                          certfile, keyfile);
+        obj->obj = PK11_CreateGenericObject(slot, attrs, n_attrs, permanent);
+        if (obj->obj == NULL) {
             pkiDebug("%s: error loading %scertificate \"%s\"\n",
                      __FUNCTION__, cert_mark_trusted ? "CA " : "", certfile);
             status = SECFailure;
@@ -2551,6 +2648,7 @@ crypto_load_files(krb5_context context,
                             (id_cryptoctx->id_certs, cert) != SECSuccess) {
                             status = SECFailure;
                         }
+                        obj->cert = CERT_DupCertificate(cert);
                     } else if (cert_mark_trusted) {
                         /* Add to the CA list. */
                         if (cert_maybe_add_to_list
@@ -2567,6 +2665,20 @@ crypto_load_files(krb5_context context,
         }
         if (before != NULL) {
             CERT_DestroyCertList(before);
+        }
+        if ((keyfile != NULL) && (obj->cert != NULL)) {
+            key = PK11_FindPrivateKeyFromCert(slot, obj->cert,
+                                              crypto_pwcb_prep(id_cryptoctx,
+                                                               context));
+            if (key == NULL) {
+                pkiDebug("%s: no key private found for \"%s\"(%s), "
+                         "even though we just loaded that key?\n",
+                         __FUNCTION__,
+                         obj->cert->nickname ?
+                         obj->cert->nickname : "(no name)",
+                         certfile);
+            } else
+                SECKEY_DestroyPrivateKey(req_cryptoctx->client_dh_privkey);
         }
     }
 
@@ -2683,6 +2795,18 @@ crypto_load_dir(krb5_context context,
     return status;
 }
 
+static char *
+reassemble_nssdb_name(PLArenaPool *pool, const char *dbdir)
+{
+    char *tmp, *ret;
+
+    if (asprintf(&tmp, "NSS:%s", dbdir) < 0)
+        return NULL;
+    ret = PORT_ArenaStrdup(pool, tmp);
+    free(tmp);
+    return ret;
+}
+
 /* Load up a certificate database. */
 static krb5_error_code
 crypto_load_nssdb(krb5_context context,
@@ -2691,7 +2815,7 @@ crypto_load_nssdb(krb5_context context,
                   const char *configdir,
                   pkinit_identity_crypto_context id_cryptoctx)
 {
-    PK11SlotInfo *userdb, **id_userdbs;
+    struct _pkinit_identity_crypto_userdb *userdb, **id_userdbs;
     char *p;
     size_t spec_size;
     int i, j;
@@ -2730,8 +2854,12 @@ crypto_load_nssdb(krb5_context context,
         id_userdbs[j] = id_cryptoctx->id_userdbs[j];
 
     /* Actually load the module. */
-    userdb = SECMOD_OpenUserDB(p);
-    if (userdb == NULL) {
+    userdb = PORT_ArenaZAlloc(id_cryptoctx->pool, sizeof(*userdb));
+    if (userdb == NULL)
+        return SECFailure;
+    userdb->name = reassemble_nssdb_name(id_cryptoctx->pool, configdir);
+    userdb->userdb = SECMOD_OpenUserDB(p);
+    if (userdb->userdb == NULL) {
         pkiDebug("%s: error loading NSS cert database \"%s\"\n",
                  __FUNCTION__, configdir);
         return ENOENT;
@@ -2744,11 +2872,11 @@ crypto_load_nssdb(krb5_context context,
     id_cryptoctx->id_userdbs = id_userdbs;
 
     /* Load the CAs from the database. */
-    cert_load_ca_certs_from_slot(context, id_cryptoctx, userdb);
+    cert_load_ca_certs_from_slot(context, id_cryptoctx, userdb->userdb);
 
     /* Load the keys from the database. */
     return cert_load_certs_with_keys_from_slot(context, id_cryptoctx,
-                                               userdb, NULL, NULL);
+                                               userdb->userdb, NULL, NULL);
 }
 
 /* Load up a certificate and associated key. */
@@ -3080,6 +3208,7 @@ crypto_cert_select(krb5_context context, pkinit_cert_matching_data *data)
     if (data->ch->id_cryptoctx->id_cert != NULL)
         CERT_DestroyCertificate(data->ch->id_cryptoctx->id_cert);
     data->ch->id_cryptoctx->id_cert = cert;
+    crypto_update_signer_identity(context, data->ch->id_cryptoctx);
     return 0;
 }
 
@@ -3146,6 +3275,7 @@ crypto_cert_select_default(krb5_context context,
     if (id_cryptoctx->id_cert != NULL)
         CERT_DestroyCertificate(id_cryptoctx->id_cert);
     id_cryptoctx->id_cert = CERT_DupCertificate(cert);
+    crypto_update_signer_identity(context, id_cryptoctx);
     return 0;
 }
 
@@ -3313,9 +3443,9 @@ pkinit_create_td_dh_parameters(krb5_context context,
             continue;
         /* Add it to the list. */
         memset(&id[j], 0, sizeof(id[j]));
-        id[j].algorithm.data = oid->data;
+        id[j].algorithm.data = (char *)oid->data;
         id[j].algorithm.length = oid->len;
-        id[j].parameters.data = tmp.data;
+        id[j].parameters.data = (char *)tmp.data;
         id[j].parameters.length = tmp.len;
         ids[j] = &id[j];
         j++;
@@ -3368,7 +3498,7 @@ pkinit_process_td_dh_params(krb5_context context,
     for (i = 0; (algId != NULL) && (algId[i] != NULL); i++) {
         /* Decode the domain parameters. */
         item.len = algId[i]->parameters.length;
-        item.data = algId[i]->parameters.data;
+        item.data = (unsigned char *)algId[i]->parameters.data;
         memset(&params, 0, sizeof(params));
         if (SEC_ASN1DecodeItem(req_cryptoctx->pool, &params,
                                domain_parameters_template,
@@ -3418,11 +3548,11 @@ pkinit_create_td_invalid_certificate(krb5_context context,
         if (SEC_ASN1EncodeItem(req_cryptoctx->pool, &item, &isn,
                                issuer_and_serial_number_template) != &item)
             return ENOMEM;
-        id.issuerAndSerialNumber.data = item.data;
+        id.issuerAndSerialNumber.data = (char *)item.data;
         id.issuerAndSerialNumber.length = item.len;
     } else {
         item = invalid->subjectKeyID;
-        id.subjectKeyIdentifier.data = item.data;
+        id.subjectKeyIdentifier.data = (char *)item.data;
         id.subjectKeyIdentifier.length = item.len;
     }
     ids[0] = &id;
@@ -3573,11 +3703,11 @@ pkinit_create_td_trusted_certifiers(krb5_context context,
                 CERT_DestroyCertList(clist);
                 return ENOMEM;
             }
-            id[i].issuerAndSerialNumber.data = item.data;
+            id[i].issuerAndSerialNumber.data = (char *)item.data;
             id[i].issuerAndSerialNumber.length = item.len;
         } else {
             item = node->cert->subjectKeyID;
-            id[i].subjectKeyIdentifier.data = item.data;
+            id[i].subjectKeyIdentifier.data = (char *)item.data;
             id[i].subjectKeyIdentifier.length = item.len;
         }
         ids[i] = &id[i];
@@ -3700,6 +3830,7 @@ pkinit_octetstring_hkdf(krb5_context context,
     size_t kbyte, klength;
     krb5_data rnd_data;
     krb5_error_code result;
+    NSSInitContext *ncontext;
 
     if (counter_length > sizeof(counter))
         return EINVAL;
@@ -3715,6 +3846,17 @@ pkinit_octetstring_hkdf(krb5_context context,
         counter[i] = (counter_start >> (8 * (counter_length - 1 - i))) & 0xff;
     rnd_len = kbyte;
     left = rnd_len;
+    ncontext = NSS_InitContext(DEFAULT_CONFIGDIR,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NULL,
+                               NSS_INIT_READONLY |
+                               NSS_INIT_NOCERTDB |
+                               NSS_INIT_NOMODDB |
+                               NSS_INIT_FORCEOPEN |
+                               NSS_INIT_NOROOTINIT |
+                               NSS_INIT_PK11RELOAD);
     while (left > 0) {
         ctx = PK11_CreateDigestContext(hash_alg);
         if (ctx == NULL) {
@@ -3773,7 +3915,8 @@ pkinit_octetstring_hkdf(krb5_context context,
         }
     }
 
-    krb5_free_keyblock_contents(context, krb5key);
+    if (NSS_ShutdownContext(ncontext) != SECSuccess)
+        pkiDebug("%s: error shutting down context\n", __FUNCTION__);
 
     krb5key->contents = malloc(klength);
     if (krb5key->contents == NULL) {
@@ -3810,22 +3953,22 @@ pkinit_octetstring2key(krb5_context context,
 /* Return TRUE if the item and the "algorithm" part of the algorithm identifier
  * are the same. */
 static PRBool
-octet_data_and_data_and_length_equal(const krb5_octet_data *octets,
-                                     const void *data, size_t len)
+data_and_ptr_and_length_equal(const krb5_data *data,
+                              const void *ptr, size_t len)
 {
-    return (octets->length == len) && (memcmp(octets->data, data, len) == 0);
+    return (data->length == len) && (memcmp(data->data, ptr, len) == 0);
 }
 
 /* Encode the other info used by the agility KDF.  Taken almost verbatim from
  * parts of the agility KDF in pkinit_crypto_openssl.c */
 static krb5_error_code
 encode_agility_kdf_other_info(krb5_context context,
-                              krb5_octet_data *alg_oid,
+                              krb5_data *alg_oid,
                               krb5_const_principal party_u_info,
                               krb5_const_principal party_v_info,
                               krb5_enctype enctype,
-                              krb5_octet_data *as_req,
-                              krb5_octet_data *pk_as_rep,
+                              krb5_data *as_req,
+                              krb5_data *pk_as_rep,
                               krb5_data **other_info)
 {
     krb5_error_code retval = 0;
@@ -3873,13 +4016,13 @@ cleanup:
  * one that we support. */
 krb5_error_code
 pkinit_alg_agility_kdf(krb5_context context,
-                       krb5_octet_data *secret,
-                       krb5_octet_data *alg_oid,
+                       krb5_data *secret,
+                       krb5_data *alg_oid,
                        krb5_const_principal party_u_info,
                        krb5_const_principal party_v_info,
                        krb5_enctype enctype,
-                       krb5_octet_data *as_req,
-                       krb5_octet_data *pk_as_rep,
+                       krb5_data *as_req,
+                       krb5_data *pk_as_rep,
                        krb5_keyblock *key_block)
 {
     krb5_data *other_info = NULL;
@@ -3894,30 +4037,27 @@ pkinit_alg_agility_kdf(krb5_context context,
     if (retval != 0)
         return retval;
 
-    if (octet_data_and_data_and_length_equal(alg_oid,
-                                             krb5_pkinit_sha512_oid,
-                                             krb5_pkinit_sha512_oid_len))
+    if (data_and_ptr_and_length_equal(alg_oid, krb5_pkinit_sha512_oid,
+                                      krb5_pkinit_sha512_oid_len))
         retval = pkinit_octetstring_hkdf(context,
                                          SEC_OID_SHA512, 1, 4, enctype,
-                                         secret->data, secret->length,
-                                         other_info->data, other_info->length,
-                                         key_block);
-    else if (octet_data_and_data_and_length_equal(alg_oid,
-                                                  krb5_pkinit_sha256_oid,
-                                                  krb5_pkinit_sha256_oid_len))
+                                         (unsigned char *)secret->data,
+                                         secret->length, other_info->data,
+                                         other_info->length, key_block);
+    else if (data_and_ptr_and_length_equal(alg_oid, krb5_pkinit_sha256_oid,
+                                           krb5_pkinit_sha256_oid_len))
         retval = pkinit_octetstring_hkdf(context,
                                          SEC_OID_SHA256, 1, 4, enctype,
-                                         secret->data, secret->length,
-                                         other_info->data, other_info->length,
-                                         key_block);
-    else if (octet_data_and_data_and_length_equal(alg_oid,
-                                                  krb5_pkinit_sha1_oid,
-                                                  krb5_pkinit_sha1_oid_len))
+                                         (unsigned char *)secret->data,
+                                         secret->length, other_info->data,
+                                         other_info->length, key_block);
+    else if (data_and_ptr_and_length_equal(alg_oid, krb5_pkinit_sha1_oid,
+                                           krb5_pkinit_sha1_oid_len))
         retval = pkinit_octetstring_hkdf(context,
                                          SEC_OID_SHA1, 1, 4, enctype,
-                                         secret->data, secret->length,
-                                         other_info->data, other_info->length,
-                                         key_block);
+                                         (unsigned char *)secret->data,
+                                         secret->length, other_info->data,
+                                         other_info->length, key_block);
     else
         retval = KRB5KDC_ERR_NO_ACCEPTABLE_KDF;
 
@@ -4067,6 +4207,100 @@ cert_add_kpn(PLArenaPool * pool, krb5_context context, SECItem *name,
     i = cert_add_princ(context, &tmp, sans_inout, n_sans_inout);
     free(comps);
     return i;
+}
+
+static const char *
+crypto_get_identity_by_slot(krb5_context context,
+                            pkinit_identity_crypto_context id_cryptoctx,
+                            PK11SlotInfo *slot)
+{
+    PK11SlotInfo *mslot;
+    struct _pkinit_identity_crypto_userdb *userdb;
+    struct _pkinit_identity_crypto_module *module;
+    int i, j;
+
+    mslot = id_cryptoctx->id_p12_slot.slot;
+    if ((mslot != NULL) && (PK11_GetSlotID(mslot) == PK11_GetSlotID(slot)))
+        return id_cryptoctx->id_p12_slot.p12name;
+    for (i = 0;
+         (id_cryptoctx->id_userdbs != NULL) &&
+         (id_cryptoctx->id_userdbs[i] != NULL);
+         i++) {
+        userdb = id_cryptoctx->id_userdbs[i];
+        if (PK11_GetSlotID(userdb->userdb) == PK11_GetSlotID(slot))
+            return userdb->name;
+    }
+    for (i = 0;
+         (id_cryptoctx->id_modules != NULL) &&
+         (id_cryptoctx->id_modules[i] != NULL);
+         i++) {
+        module = id_cryptoctx->id_modules[i];
+        for (j = 0; j < module->module->slotCount; j++) {
+            mslot = module->module->slots[j];
+            if (PK11_GetSlotID(mslot) == PK11_GetSlotID(slot))
+                return module->name;
+        }
+    }
+    return NULL;
+}
+
+static void
+crypto_update_signer_identity(krb5_context context,
+                              pkinit_identity_crypto_context id_cryptoctx)
+{
+    PK11SlotList *slist;
+    PK11SlotListElement *sle;
+    CERTCertificate *cert;
+    struct _pkinit_identity_crypto_file *obj;
+    int i;
+
+    id_cryptoctx->identity = NULL;
+    if (id_cryptoctx->id_cert == NULL)
+        return;
+    cert = id_cryptoctx->id_cert;
+    for (i = 0;
+         (id_cryptoctx->id_objects != NULL) &&
+         (id_cryptoctx->id_objects[i] != NULL);
+         i++) {
+        obj = id_cryptoctx->id_objects[i];
+        if ((obj->cert != NULL) && CERT_CompareCerts(obj->cert, cert)) {
+            id_cryptoctx->identity = obj->name;
+            return;
+        }
+    }
+    if (cert->slot != NULL) {
+        id_cryptoctx->identity = crypto_get_identity_by_slot(context,
+                                                             id_cryptoctx,
+                                                             cert->slot);
+        if (id_cryptoctx->identity != NULL)
+            return;
+    }
+    slist = PK11_GetAllSlotsForCert(cert, NULL);
+    if (slist != NULL) {
+        for (sle = PK11_GetFirstSafe(slist);
+             sle != NULL;
+             sle = PK11_GetNextSafe(slist, sle, PR_FALSE)) {
+            id_cryptoctx->identity = crypto_get_identity_by_slot(context,
+                                                                 id_cryptoctx,
+                                                                 sle->slot);
+            if (id_cryptoctx->identity != NULL) {
+                PK11_FreeSlotList(slist);
+                return;
+            }
+        }
+        PK11_FreeSlotList(slist);
+    }
+}
+
+krb5_error_code
+crypto_retrieve_signer_identity(krb5_context context,
+                                pkinit_identity_crypto_context id_cryptoctx,
+                                const char **identity)
+{
+    *identity = id_cryptoctx->identity;
+    if (*identity == NULL)
+        return ENOENT;
+    return 0;
 }
 
 static krb5_error_code
@@ -4295,45 +4529,46 @@ crypto_signeddata_common_create(krb5_context context,
                                 pkinit_identity_crypto_context id_cryptoctx,
                                 NSSCMSMessage *msg,
                                 SECOidTag digest,
-                                enum sdcc_include_certchain include_certchain,
+                                enum sdcc_include_certchain certchain_mode,
                                 enum sdcc_include_signed_attrs add_signedattrs,
                                 NSSCMSSignedData **signed_data_out)
 {
     NSSCMSSignedData *sdata;
     NSSCMSSignerInfo *signer;
-
-    if (id_cryptoctx->id_cert == NULL) {
-        pkiDebug("%s: no signer identity\n", __FUNCTION__);
-        return ENOENT;
-    }
+    NSSCMSCertChainMode chainmode;
 
     /* Create a signed-data object. */
     sdata = NSS_CMSSignedData_Create(msg);
     if (sdata == NULL)
         return ENOMEM;
 
-    /* Create a signer and add it to the signed-data pointer. */
-    signer = NSS_CMSSignerInfo_Create(msg, id_cryptoctx->id_cert, digest);
-    if (signer == NULL)
-        return ENOMEM;
-    if (NSS_CMSSignerInfo_IncludeCerts(signer,
-                                       (include_certchain ==
-                                        signeddata_common_create_with_chain) ?
-                                       NSSCMSCM_CertChain : NSSCMSCM_CertOnly,
-                                       certUsageAnyCA) != SECSuccess) {
-        pkiDebug("%s: error setting IncludeCerts\n", __FUNCTION__);
-        return ENOMEM;
-    }
-    if (NSS_CMSSignedData_AddSignerInfo(sdata, signer) != SECSuccess)
-        return ENOMEM;
-
-    if (add_signedattrs == signeddata_common_create_with_signed_attrs)
-        /* The presence of any signed attribute means the digest
-         * becomes a signed attribute, too. */
-        if (NSS_CMSSignerInfo_AddSigningTime(signer, PR_Now()) != SECSuccess) {
-            pkiDebug("%s: error adding signing time\n", __FUNCTION__);
+    if (id_cryptoctx->id_cert != NULL) {
+        /* Create a signer and add it to the signed-data pointer. */
+        signer = NSS_CMSSignerInfo_Create(msg, id_cryptoctx->id_cert, digest);
+        if (signer == NULL)
+            return ENOMEM;
+        chainmode = (certchain_mode == signeddata_common_create_with_chain) ?
+                    NSSCMSCM_CertChain :
+                    NSSCMSCM_CertOnly;
+        if (NSS_CMSSignerInfo_IncludeCerts(signer,
+                                           chainmode,
+                                           certUsageAnyCA) != SECSuccess) {
+            pkiDebug("%s: error setting IncludeCerts\n", __FUNCTION__);
             return ENOMEM;
         }
+        if (NSS_CMSSignedData_AddSignerInfo(sdata, signer) != SECSuccess)
+            return ENOMEM;
+
+        if (add_signedattrs == signeddata_common_create_with_signed_attrs) {
+            /* The presence of any signed attribute means the digest
+             * becomes a signed attribute, too. */
+            if (NSS_CMSSignerInfo_AddSigningTime(signer,
+                                                 PR_Now()) != SECSuccess) {
+                pkiDebug("%s: error adding signing time\n", __FUNCTION__);
+                return ENOMEM;
+            }
+        }
+    }
 
     *signed_data_out = sdata;
     return 0;
@@ -5270,7 +5505,7 @@ cms_signeddata_verify(krb5_context context,
                                               cms_msg_type,
                                               &plain,
                                               &was_signed);
-        if ((ret != 0) || (plain == NULL) || !was_signed) {
+        if ((ret != 0) || (plain == NULL)) {
             NSS_CMSMessage_Destroy(msg);
             PORT_FreeArena(pool, PR_TRUE);
             return ret ? ret : ENOMEM;

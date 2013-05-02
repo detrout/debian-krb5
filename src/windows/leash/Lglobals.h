@@ -17,23 +17,12 @@
 #define LEASHGLOBALS_H
 
 #include <tlhelp32.h>
+#include <loadfuncs-com_err.h>
 #include <loadfuncs-krb5.h>
 ////#include <loadfuncs-krb.h>
 #include <loadfuncs-profile.h>
 #include <loadfuncs-leash.h>
-
-typedef struct TicketList
-{
-    char* theTicket;
-    TicketList* next;
-    char* tktEncType;
-    char* keyEncType;
-    int   addrCount;
-    char ** addrList;
-    char * name;
-    char * inst;
-    char * realm;
-} TicketList;
+#include <krb5.h>
 
 // toolhelp functions
 TYPEDEF_FUNC(
@@ -81,20 +70,8 @@ TYPEDEF_FUNC(
 TYPEDEF_FUNC(
     long,
     WINAPIV,
-    not_an_API_LeashKRB5GetTickets,
-    (TICKETINFO *, TicketList **, krb5_context *)
-    );
-TYPEDEF_FUNC(
-    long,
-    WINAPIV,
     not_an_API_LeashAFSGetToken,
     (TICKETINFO *, TicketList **, char *)
-    );
-TYPEDEF_FUNC(
-    long,
-    WINAPIV,
-    not_an_API_LeashFreeTicketList,
-    (TicketList**)
     );
 TYPEDEF_FUNC(
     long,
@@ -104,9 +81,7 @@ TYPEDEF_FUNC(
     );
 
 extern DECL_FUNC_PTR(not_an_API_LeashKRB4GetTickets);
-extern DECL_FUNC_PTR(not_an_API_LeashKRB5GetTickets);
 extern DECL_FUNC_PTR(not_an_API_LeashAFSGetToken);
-extern DECL_FUNC_PTR(not_an_API_LeashFreeTicketList);
 extern DECL_FUNC_PTR(not_an_API_LeashGetTimeServerName);
 extern DECL_FUNC_PTR(Leash_kdestroy);
 extern DECL_FUNC_PTR(Leash_changepwd_dlg);
@@ -153,9 +128,7 @@ extern DECL_FUNC_PTR(Leash_reset_defaults);
 
 ////Do we still need this one?
 #define pLeashKRB4GetTickets     pnot_an_API_LeashKRB4GetTickets
-#define pLeashKRB5GetTickets     pnot_an_API_LeashKRB5GetTickets
 #define pLeashAFSGetToken        pnot_an_API_LeashAFSGetToken
-#define pLeashFreeTicketList     pnot_an_API_LeashFreeTicketList
 #define pLeashGetTimeServerName  pnot_an_API_LeashGetTimeServerName
 
 // psapi functions
@@ -166,6 +139,9 @@ extern DECL_FUNC_PTR(EnumProcessModules);
 extern DECL_FUNC_PTR(CreateToolhelp32Snapshot);
 extern DECL_FUNC_PTR(Module32First);
 extern DECL_FUNC_PTR(Module32Next);
+
+// com_err functions
+extern DECL_FUNC_PTR(error_message);
 
 // krb5 functions
 extern DECL_FUNC_PTR(krb5_cc_default_name);
@@ -185,6 +161,29 @@ extern DECL_FUNC_PTR(krb5_unparse_name);
 extern DECL_FUNC_PTR(krb5_free_unparsed_name);
 extern DECL_FUNC_PTR(krb5_free_principal);
 extern DECL_FUNC_PTR(krb5_cc_close);
+extern DECL_FUNC_PTR(krb5_cc_default);
+extern DECL_FUNC_PTR(krb5_cc_destroy);
+extern DECL_FUNC_PTR(krb5_cc_set_flags);
+extern DECL_FUNC_PTR(krb5_cc_get_name);
+extern DECL_FUNC_PTR(krb5_cc_start_seq_get);
+extern DECL_FUNC_PTR(krb5_cc_end_seq_get);
+extern DECL_FUNC_PTR(krb5_cc_next_cred);
+extern DECL_FUNC_PTR(krb5_cccol_cursor_new);
+extern DECL_FUNC_PTR(krb5_cccol_cursor_next);
+extern DECL_FUNC_PTR(krb5_cccol_cursor_free);
+extern DECL_FUNC_PTR(krb5_decode_ticket);
+extern DECL_FUNC_PTR(krb5_free_ticket);
+extern DECL_FUNC_PTR(krb5_init_context);
+extern DECL_FUNC_PTR(krb5_is_config_principal);
+extern DECL_FUNC_PTR(krb5_cc_switch);
+extern DECL_FUNC_PTR(krb5_build_principal_ext);
+extern DECL_FUNC_PTR(krb5_get_renewed_creds);
+extern DECL_FUNC_PTR(krb5_cc_initialize);
+extern DECL_FUNC_PTR(krb5_cc_store_cred);
+extern DECL_FUNC_PTR(krb5_cc_get_full_name);
+extern DECL_FUNC_PTR(krb5_enctype_to_name);
+extern DECL_FUNC_PTR(krb5_cc_get_type);
+extern DECL_FUNC_PTR(krb5int_cc_user_set_default_name);
 // extern DECL_FUNC_PTR(krb5_get_host_realm);
 
 // profile functions
@@ -239,6 +238,17 @@ extern BOOL SetRegistryVariable(const CString& regVariable,
 extern VOID LeashErrorBox(LPCSTR errorMsg, LPCSTR insertedString,
                           LPCSTR errorFlag = "Error");
 
+// Get ticket info for the default ccache only
+extern void LeashKRB5ListDefaultTickets(TICKETINFO *ticketinfo);
+// clean up ticket info
+extern void LeashKRB5FreeTicketInfo(TICKETINFO *ticketinfo);
+
+// Allocate TICKETINFO for each ccache that contain tickets
+extern void LeashKRB5ListAllTickets(TICKETINFO **ticketinfolist);
+// clean up ticket info list
+extern void LeashKRB5FreeTickets(TICKETINFO **ticketinfolist);
+
+
 
 class Directory
 {
@@ -256,8 +266,6 @@ public:
 class TicketInfoWrapper {
   public:
     HANDLE     lockObj;
-////Can this be commented out?
-    TICKETINFO Krb4;
     TICKETINFO Krb5;
     TICKETINFO Afs;
 };

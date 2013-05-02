@@ -47,12 +47,12 @@ gss_pname_to_uid
  * Provides a platform-specific name for a GSSAPI name as interpreted by a
  * given mechanism.
  *
- * @param name       The gss name resulting from accept_sec_context
- * @param mech_type  The mechanism that will be asked to map @a name to a
- *                   local name
- * @param localname  Pointer to a buffer_desc allocated by the caller
- *                   that will be filled in with the local name on successful
- *                   completion.
+ * @param [out] minor      Minor status code
+ * @param [in] name        The gss name resulting from accept_sec_context
+ * @param [in] mech_type   The mechanism that will be asked to map @a name to a
+ *                         local name
+ * @param [out] localname  Caller-allocated buffer to be filled in with the
+ *                         local name on success
  */
 OM_uint32 KRB5_CALLCONV
 gss_localname
@@ -61,7 +61,8 @@ gss_localname
 	 gss_const_OID mech_type,
 	 gss_buffer_t localname);
 
-/** Determine whether a mechanism name is authorized to act as a username.
+/**
+ * Determine whether a mechanism name is authorized to act as a username.
  *
  * @param [in] name      Mechanism name
  * @param [in] username  System username
@@ -77,7 +78,8 @@ int KRB5_CALLCONV
 gss_userok(const gss_name_t name,
            const char *username);
 
-/** Determine whether a mechanism name is authorized to act as a local name.
+/**
+ *  Determine whether a mechanism name is authorized to act as a local name.
  *
  * @param [out] minor  Minor status code
  * @param [in] name    Mechanism name
@@ -366,6 +368,7 @@ gss_add_cred_impersonate_name(
  * Naming extensions
  */
 GSS_DLLIMP extern gss_buffer_t GSS_C_ATTR_LOCAL_LOGIN_USER;
+GSS_DLLIMP extern gss_OID GSS_C_NT_COMPOSITE_EXPORT;
 
 OM_uint32 KRB5_CALLCONV gss_display_name_ext
 (
@@ -458,6 +461,74 @@ int KRB5_CALLCONV gss_oid_equal
     gss_const_OID,      /* first_oid */
     gss_const_OID       /* second_oid */
 );
+
+/* Credential store extensions */
+
+struct gss_key_value_element_struct {
+    const char *key;
+    const char *value;
+};
+typedef struct gss_key_value_element_struct gss_key_value_element_desc;
+
+struct gss_key_value_set_struct {
+    OM_uint32 count;
+    gss_key_value_element_desc *elements;
+};
+typedef struct gss_key_value_set_struct gss_key_value_set_desc;
+typedef const gss_key_value_set_desc *gss_const_key_value_set_t;
+
+#define GSS_C_NO_CRED_STORE ((gss_const_key_value_set_t) 0)
+
+OM_uint32 KRB5_CALLCONV
+gss_acquire_cred_from(
+    OM_uint32 *,               /* minor_status */
+    gss_name_t,                /* desired_name */
+    OM_uint32,                 /* time_req */
+    gss_OID_set,               /* desired_mechs */
+    gss_cred_usage_t,          /* cred_usage */
+    gss_const_key_value_set_t, /* cred_store */
+    gss_cred_id_t *,           /* output_cred_handle */
+    gss_OID_set *,             /* actual_mechs */
+    OM_uint32 *);              /* time_rec */
+
+OM_uint32 KRB5_CALLCONV
+gss_add_cred_from(
+    OM_uint32 *,               /* minor_status */
+    gss_cred_id_t,             /* input_cred_handle */
+    gss_name_t,                /* desired_name */
+    gss_OID,                   /* desired_mech */
+    gss_cred_usage_t,          /* cred_usage */
+    OM_uint32,                 /* initiator_time_req */
+    OM_uint32,                 /* acceptor_time_req */
+    gss_const_key_value_set_t, /* cred_store */
+    gss_cred_id_t *,           /* output_cred_handle */
+    gss_OID_set *,             /* actual_mechs */
+    OM_uint32 *,               /* initiator_time_rec */
+    OM_uint32 *);              /* acceptor_time_rec */
+
+OM_uint32 KRB5_CALLCONV
+gss_store_cred_into(
+    OM_uint32 *,               /* minor_status */
+    gss_cred_id_t,             /* input_cred_handle */
+    gss_cred_usage_t,          /* input_usage */
+    gss_OID,                   /* desired_mech */
+    OM_uint32,                 /* overwrite_cred */
+    OM_uint32,                 /* default_cred */
+    gss_const_key_value_set_t, /* cred_store */
+    gss_OID_set *,             /* elements_stored */
+    gss_cred_usage_t *);       /* cred_usage_stored */
+
+OM_uint32 KRB5_CALLCONV
+gss_export_cred(
+    OM_uint32 *,               /* minor_status */
+    gss_cred_id_t,             /* cred_handle */
+    gss_buffer_t);             /* token */
+
+OM_uint32 KRB5_CALLCONV
+gss_import_cred(
+    OM_uint32 *,               /* minor_status */
+    gss_buffer_t,              /* token */
+    gss_cred_id_t *);          /* cred_handle */
 
 #ifdef __cplusplus
 }

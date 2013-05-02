@@ -25,6 +25,7 @@
  */
 
 #include <errno.h>
+#include <locale.h>
 #include <stdio.h>
 #include <ctype.h>
 #include <sys/file.h>
@@ -97,7 +98,7 @@ main(argc, argv)
     krb5_creds *my_creds;
     krb5_auth_context auth_context;
 
-    setlocale(LC_MESSAGES, "");
+    setlocale(LC_ALL, "");
     retval = krb5_init_context(&context);
     if (retval) {
         com_err(argv[0], retval, _("while initializing krb5"));
@@ -322,7 +323,6 @@ open_connection(krb5_context context, char *host, int *fd_out)
 
     *fd_out = -1;
     memset(&hints, 0, sizeof(hints));
-    hints.ai_flags = AI_ADDRCONFIG;
     hints.ai_family = PF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = AI_ADDRCONFIG;

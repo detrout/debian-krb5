@@ -142,10 +142,6 @@ top_srcdir = @top_srcdir@
 VPATH = @srcdir@
 CONFIG_RELTOPDIR = @CONFIG_RELTOPDIR@
 
-FAKEDEST=$(BUILDTOP)/util/fakedest
-FAKEPREFIX=$(FAKEDEST)/$(prefix)
-FAKELIBDIR=$(FAKEPREFIX)/lib
-
 # DEFS		set by configure
 # DEFINES	set by local Makefile.in
 # LOCALINCLUDES	set by local Makefile.in
@@ -210,6 +206,10 @@ ADMIN_MANDIR = $(KRB5MANROOT)/man8
 SERVER_MANDIR = $(KRB5MANROOT)/man8
 CLIENT_MANDIR = $(KRB5MANROOT)/man1
 FILE_MANDIR = $(KRB5MANROOT)/man5
+ADMIN_CATDIR = $(KRB5MANROOT)/cat8
+SERVER_CATDIR = $(KRB5MANROOT)/cat8
+CLIENT_CATDIR = $(KRB5MANROOT)/cat1
+FILE_CATDIR = $(KRB5MANROOT)/cat5
 KRB5_LIBDIR = @libdir@
 KRB5_SHLIBDIR = @libdir@$(SHLIB_TAIL_COMP)
 KRB5_INCDIR = @includedir@
@@ -369,9 +369,6 @@ VERTO_VERSION	= @VERTO_VERSION@
 VERTO_DEPS	= $(VERTO_DEPS-@VERTO_VERSION@)
 VERTO_DEPS-sys	=
 VERTO_DEPS-k5	= $(BUILDTOP)/include/verto.h
-VERTO_K5EV_DEPS	= $(VERTO_K5EV_DEPS-@VERTO_VERSION@)
-VERTO_K5EV_DEPS-sys =
-VERTO_K5EV_DEPS-k5 = $(BUILDTOP)/include/verto-k5ev.h
 
 # LIBS gets substituted in... e.g. -lnsl -lsocket
 
@@ -389,7 +386,7 @@ KDB5_LIB	= -lkdb5 $(KDB5_PLUGIN_LIBS)
 
 VERTO_DEPLIB	= $(VERTO_DEPLIB-@VERTO_VERSION@)
 VERTO_DEPLIB-sys = # empty
-VERTO_DEPLIB-k5	= $(TOPLIBD)/libverto-k5ev$(DEPLIBEXT) $(TOPLIBD)/libverto$(DEPLIBEXT)
+VERTO_DEPLIB-k5	= $(TOPLIBD)/libverto$(DEPLIBEXT)
 VERTO_CFLAGS	= @VERTO_CFLAGS@
 VERTO_LIBS	= @VERTO_LIBS@
 
@@ -601,7 +598,7 @@ VALGRIND=
 # Need absolute paths here because under kshd or ftpd we may run programs
 # while in other directories.
 VALGRIND_LOGDIR = `cd $(BUILDTOP)&&pwd`
-VALGRIND1 = valgrind --tool=memcheck --log-file=$(VALGRIND_LOGDIR)/vg.%p --trace-children=yes -v --leak-check=yes --suppressions=`cd $(top_srcdir)&&pwd`/util/valgrind-suppressions
+VALGRIND1 = valgrind --tool=memcheck --log-file=$(VALGRIND_LOGDIR)/vg.%p --trace-children=yes --leak-check=yes --suppressions=`cd $(top_srcdir)&&pwd`/util/valgrind-suppressions
 
 # Set OFFLINE=yes to disable tests that assume network connectivity.
 # (Specifically, this concerns the ability to fetch DNS data for

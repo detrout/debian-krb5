@@ -25,7 +25,7 @@
 from k5test import *
 
 # Create a bare-bones KDC.
-realm = K5Realm(create_user=False, create_host=False, start_kadmind=False)
+realm = K5Realm(create_user=False, create_host=False)
 
 # Create principals with various password expirations.
 realm.run_kadminl('addprinc -pw pass noexpire')
@@ -60,4 +60,4 @@ if 'password_expiration = ' not in output or \
         'password_expiration = 0\n' in output:
     fail('Expected non-zero password expiration not seen for days')
 
-success('Password expiration warning tests.')
+success('Password expiration warning tests')

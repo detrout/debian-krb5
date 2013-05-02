@@ -87,6 +87,10 @@
 #define IDI_LEASH_TICKET_ADDRESS        262
 #define IDI_LEASH_TICKET_SESSION        263
 #define IDI_LEASH_TICKET_ENCRYPTION     264
+#define IDR_RIBBON1                     265
+#define IDB_HOMESMALL                   266
+#define IDB_HOMELARGE                   267
+#define IDB_BITMAP2                     268
 #define IDC_PROGRESS1                   1000
 #define IDC_TRACKBAR1                   1001
 #define IDC_TRACKBAR2                   1002
@@ -287,6 +291,8 @@
 #define IDC_RADIO_MSLSA_IMPORT_ON       1204
 #define IDC_RADIO_MSLSA_IMPORT_MATCH    1205
 #define IDC_STATIC_LEASH_MSLSA          1206
+#define IDC_LEASH_MAINVIEW              1207
+#define IDC_LIST3                       1208
 #define IDD_FILESPECIAL                 1536
 #define IDD_LEASH_FILESPECIAL           1536
 #define IDD_KRB_PROP_MISC               1537
@@ -322,15 +328,30 @@
 #define ID_INIT_TICKET                  32807
 #define ID_AUTO_RENEW                   32808
 #define ID_OBTAIN_TGT_WITH_LPARAM       32809
+#define ID_TIME_ISSUED                  32810
+#define ID_RENEWABLE_UNTIL              32811
+#define ID_SHOW_TICKET_FLAGS            32812
+#define ID_BUTTON2                      32813
+#define ID_BUTTON5                      32816
+#define ID_BUTTON4                      32818
+#define ID_FORGET_PRINCIPALS            32818
+#define ID_ENCRYPTION_TYPE              32826
+#define ID_VALID_UNTIL                  32828
+#define ID_MAKE_DEFAULT                 32835
+#define ID_CHECK2                       32836
+#define ID_IMPORT_TICKETS               32836
+#define ID_EXPORT_TICKET                32837
+#define ID_AUTO_IMPORT_TICKET           32838
+#define ID_AUTO_IMPORT_TICKETS          32840
 
 // Next default values for new objects
 //
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_3D_CONTROLS                     1
-#define _APS_NEXT_RESOURCE_VALUE        241
-#define _APS_NEXT_COMMAND_VALUE         32810
-#define _APS_NEXT_CONTROL_VALUE         1207
+#define _APS_NEXT_RESOURCE_VALUE        269
+#define _APS_NEXT_COMMAND_VALUE         32841
+#define _APS_NEXT_CONTROL_VALUE         1209
 #define _APS_NEXT_SYMED_VALUE           101
 #endif
 #endif

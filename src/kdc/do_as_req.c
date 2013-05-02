@@ -73,15 +73,6 @@
 #include "adm_proto.h"
 #include "extern.h"
 
-#if APPLE_PKINIT
-#define     AS_REQ_DEBUG    0
-#if         AS_REQ_DEBUG
-#define     asReqDebug(args...)       printf(args)
-#else
-#define     asReqDebug(args...)
-#endif
-#endif /* APPLE_PKINIT */
-
 static krb5_error_code
 prepare_error_as(struct kdc_request_state *, krb5_kdc_req *,
                  int, krb5_pa_data **, krb5_boolean, krb5_principal,
@@ -128,6 +119,8 @@ struct as_req_state {
     const krb5_fulladdr *from;
 
     krb5_error_code preauth_err;
+
+    kdc_realm_t *active_realm;
 };
 
 static void
@@ -143,6 +136,7 @@ finish_process_as_req(struct as_req_state *state, krb5_error_code errcode)
     krb5_enctype useenctype;
     loop_respond_fn oldrespond;
     void *oldarg;
+    kdc_realm_t *kdc_active_realm = state->active_realm;
 
     assert(state);
     oldrespond = state->respond;
@@ -254,13 +248,6 @@ finish_process_as_req(struct as_req_state *state, krb5_error_code errcode)
         goto egress;
     }
 
-#if APPLE_PKINIT
-    asReqDebug("process_as_req reply realm %s name %s\n",
-               reply.client->realm.data, reply.client->data->data);
-#endif /* APPLE_PKINIT */
-
-
-
     errcode = handle_authdata(kdc_context,
                               state->c_flags,
                               state->client,
@@ -331,7 +318,7 @@ finish_process_as_req(struct as_req_state *state, krb5_error_code errcode)
            state->reply.enc_part.ciphertext.length);
     free(state->reply.enc_part.ciphertext.data);
 
-    log_as_req(state->from, state->request, &state->reply,
+    log_as_req(kdc_context, state->from, state->request, &state->reply,
                state->client, state->cname, state->server,
                state->sname, state->authtime, 0, 0, 0);
     did_log = 1;
@@ -346,7 +333,8 @@ egress:
         emsg = krb5_get_error_message(kdc_context, errcode);
 
     if (state->status) {
-        log_as_req(state->from, state->request, &state->reply, state->client,
+        log_as_req(kdc_context,
+                   state->from, state->request, &state->reply, state->client,
                    state->cname, state->server, state->sname, state->authtime,
                    state->status, errcode, emsg);
         did_log = 1;
@@ -454,8 +442,8 @@ finish_preauth(void *arg, krb5_error_code code)
 /*ARGSUSED*/
 void
 process_as_req(krb5_kdc_req *request, krb5_data *req_pkt,
-               const krb5_fulladdr *from, verto_ctx *vctx,
-               loop_respond_fn respond, void *arg)
+               const krb5_fulladdr *from, kdc_realm_t *kdc_active_realm,
+               verto_ctx *vctx, loop_respond_fn respond, void *arg)
 {
     krb5_error_code errcode;
     krb5_timestamp rtime;
@@ -464,50 +452,26 @@ process_as_req(krb5_kdc_req *request, krb5_data *req_pkt,
     krb5_enctype useenctype;
     struct as_req_state *state;
 
-    state = calloc(sizeof(*state), 1);
-    if (!state) {
-        (*respond)(arg, ENOMEM, NULL);
+    state = k5alloc(sizeof(*state), &errcode);
+    if (state == NULL) {
+        (*respond)(arg, errcode, NULL);
         return;
     }
-    state->session_key.contents = 0;
-    state->enc_tkt_reply.authorization_data = NULL;
-    state->reply.padata = 0;
-    memset(&state->reply, 0, sizeof(state->reply));
     state->respond = respond;
     state->arg = arg;
-    state->ticket_reply.enc_part.ciphertext.data = 0;
-    state->server_keyblock.contents = NULL;
-    state->client_keyblock.contents = NULL;
-    state->reply_encpart.enc_padata = 0;
-    state->client = NULL;
-    state->server = NULL;
     state->request = request;
-    state->e_data = NULL;
-    state->typed_e_data = FALSE;
-    state->authtime = 0;
-    state->c_flags = 0;
     state->req_pkt = req_pkt;
-    state->inner_body = NULL;
-    state->rstate = NULL;
-    state->sname = 0;
-    state->cname = 0;
-    state->pa_context = NULL;
     state->from = from;
-    memset(&state->rock, 0, sizeof(state->rock));
+    state->active_realm = kdc_active_realm;
 
-#if APPLE_PKINIT
-    asReqDebug("process_as_req top realm %s name %s\n",
-               request->client->realm.data, request->client->data->data);
-#endif /* APPLE_PKINIT */
-
+    errcode = kdc_make_rstate(kdc_active_realm, &state->rstate);
+    if (errcode != 0) {
+        (*respond)(arg, errcode, NULL);
+        return;
+    }
     if (state->request->msg_type != KRB5_AS_REQ) {
         state->status = "msg_type mismatch";
         errcode = KRB5_BADMSGTYPE;
-        goto errout;
-    }
-    errcode = kdc_make_rstate(&state->rstate);
-    if (errcode != 0) {
-        state->status = "constructing state";
         goto errout;
     }
     if (fetch_asn1_field((unsigned char *) req_pkt->data,
@@ -580,6 +544,8 @@ process_as_req(krb5_kdc_req *request, krb5_data *req_pkt,
     }
     errcode = krb5_db_get_principal(kdc_context, state->request->client,
                                     state->c_flags, &state->client);
+    if (errcode == KRB5_KDB_CANTLOCK_DB)
+        errcode = KRB5KDC_ERR_SVC_UNAVAILABLE;
     if (errcode == KRB5_KDB_NOENTRY) {
         state->status = "CLIENT_NOT_FOUND";
         if (vague_errors)
@@ -597,24 +563,12 @@ process_as_req(krb5_kdc_req *request, krb5_data *req_pkt,
      * If the backend returned a principal that is not in the local
      * realm, then we need to refer the client to that realm.
      */
-    if (!is_local_principal(state->client->princ)) {
+    if (!is_local_principal(kdc_active_realm, state->client->princ)) {
         /* Entry is a referral to another realm */
         state->status = "REFERRAL";
         errcode = KRB5KDC_ERR_WRONG_REALM;
         goto errout;
     }
-
-#if 0
-    /*
-     * Turn off canonicalization if client is marked DES only
-     * (unless enterprise principal name was requested)
-     */
-    if (isflagset(client->attributes, KRB5_KDB_NON_MS_PRINCIPAL) &&
-        krb5_princ_type(kdc_context,
-                        request->client) != KRB5_NT_ENTERPRISE_PRINCIPAL) {
-        clear(c_flags, KRB5_KDB_FLAG_CANONICALIZE);
-    }
-#endif
 
     s_flags = 0;
     setflag(s_flags, KRB5_KDB_FLAG_ALIAS_OK);
@@ -623,6 +577,8 @@ process_as_req(krb5_kdc_req *request, krb5_data *req_pkt,
     }
     errcode = krb5_db_get_principal(kdc_context, state->request->server,
                                     s_flags, &state->server);
+    if (errcode == KRB5_KDB_CANTLOCK_DB)
+        errcode = KRB5KDC_ERR_SVC_UNAVAILABLE;
     if (errcode == KRB5_KDB_NOENTRY) {
         state->status = "SERVER_NOT_FOUND";
         errcode = KRB5KDC_ERR_S_PRINCIPAL_UNKNOWN;
@@ -638,7 +594,8 @@ process_as_req(krb5_kdc_req *request, krb5_data *req_pkt,
     }
     state->authtime = state->kdc_time; /* for audit_as_request() */
 
-    if ((errcode = validate_as_request(state->request, *state->client,
+    if ((errcode = validate_as_request(kdc_active_realm,
+                                       state->request, *state->client,
                                        *state->server, state->kdc_time,
                                        &state->status, &state->e_data))) {
         if (!state->status)
@@ -650,7 +607,7 @@ process_as_req(krb5_kdc_req *request, krb5_data *req_pkt,
     /*
      * Select the keytype for the ticket session key.
      */
-    if ((useenctype = select_session_keytype(kdc_context, state->server,
+    if ((useenctype = select_session_keytype(kdc_active_realm, state->server,
                                              state->request->nktypes,
                                              state->request->ktype)) == 0) {
         /* unsupported ktype */
@@ -718,7 +675,8 @@ process_as_req(krb5_kdc_req *request, krb5_data *req_pkt,
     } else
         state->enc_tkt_reply.times.starttime = state->kdc_time;
 
-    kdc_get_ticket_endtime(kdc_context, state->enc_tkt_reply.times.starttime,
+    kdc_get_ticket_endtime(kdc_active_realm,
+                           state->enc_tkt_reply.times.starttime,
                            kdc_infinity, state->request->till, state->client,
                            state->server, &state->enc_tkt_reply.times.endtime);
 
@@ -772,6 +730,7 @@ process_as_req(krb5_kdc_req *request, krb5_data *req_pkt,
         }
         setflag(state->enc_tkt_reply.flags, TKT_FLG_ANONYMOUS);
         krb5_free_principal(kdc_context, state->request->client);
+        state->request->client = NULL;
         errcode = krb5_copy_principal(kdc_context, krb5_anonymous_principal(),
                                       &state->request->client);
         if (errcode) {
@@ -807,6 +766,7 @@ prepare_error_as (struct kdc_request_state *rstate, krb5_kdc_req *request,
     krb5_error errpkt;
     krb5_error_code retval;
     krb5_data *scratch = NULL, *e_data_asn1 = NULL, *fast_edata = NULL;
+    kdc_realm_t *kdc_active_realm = rstate->realm_data;
 
     errpkt.ctime = request->nonce;
     errpkt.cusec = 0;
@@ -821,10 +781,9 @@ prepare_error_as (struct kdc_request_state *rstate, krb5_kdc_req *request,
     errpkt.text = string2data((char *)status);
 
     if (e_data != NULL) {
-        if (typed_e_data) {
-            retval = encode_krb5_typed_data((const krb5_typed_data **)e_data,
-                                            &e_data_asn1);
-        } else
+        if (typed_e_data)
+            retval = encode_krb5_typed_data(e_data, &e_data_asn1);
+        else
             retval = encode_krb5_padata_sequence(e_data, &e_data_asn1);
         if (retval)
             goto cleanup;

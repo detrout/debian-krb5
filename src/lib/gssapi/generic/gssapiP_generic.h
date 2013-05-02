@@ -25,7 +25,7 @@
 #define _GSSAPIP_GENERIC_H_
 
 /*
- * $Id: gssapiP_generic.h 25331 2011-10-14 14:40:05Z hartmans $
+ * $Id$
  */
 
 #if defined(_WIN32)
@@ -277,8 +277,8 @@ k5buf_to_gss(OM_uint32 *minor,
 {
     OM_uint32 status = GSS_S_COMPLETE;
     char *bp = krb5int_buf_data(input_k5buf);
-    output_buffer->length = krb5int_buf_len(input_k5buf)+1;
-#ifdef _WIN32
+    output_buffer->length = krb5int_buf_len(input_k5buf);
+#if defined(_WIN32) || defined(DEBUG_GSSALLOC)
     if (output_buffer->length > 0) {
         output_buffer->value = gssalloc_malloc(output_buffer->length);
         if (output_buffer->value) {

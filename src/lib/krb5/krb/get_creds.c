@@ -39,6 +39,7 @@
 
 #include "k5-int.h"
 #include "int-proto.h"
+#include "fast.h"
 
 /*
  * Set *mcreds and *fields to a matching credential and field set for
@@ -166,6 +167,7 @@ struct _krb5_tkt_creds_context {
     int kdcopt;                 /* KDC options of request */
     krb5_keyblock *subkey;      /* subkey of request */
     krb5_data previous_request; /* Encoded request (for TCP retransmission) */
+    struct krb5int_fast_request_state *fast_state;
 
     /* The following fields are used when acquiring foreign TGTs. */
     krb5_data *realm_path;      /* Path from client to server realm */
@@ -266,9 +268,17 @@ make_request(krb5_context context, krb5_tkt_creds_context ctx,
     if (!krb5_c_valid_enctype(ctx->cur_tgt->keyblock.enctype))
         return KRB5_PROG_ETYPE_NOSUPP;
 
+    /* Create a new FAST state structure to store this request's armor key. */
+    krb5int_fast_free_state(context, ctx->fast_state);
+    ctx->fast_state = NULL;
+    code = krb5int_fast_make_state(context, &ctx->fast_state);
+    if (code)
+        return code;
+
     krb5_free_keyblock(context, ctx->subkey);
     ctx->subkey = NULL;
-    code = krb5int_make_tgs_request(context, ctx->cur_tgt, ctx->kdcopt,
+    code = krb5int_make_tgs_request(context, ctx->fast_state,
+                                    ctx->cur_tgt, ctx->kdcopt,
                                     ctx->cur_tgt->addresses, NULL,
                                     ctx->tgs_in_creds, NULL, NULL, &request,
                                     &ctx->timestamp, &ctx->nonce,
@@ -356,7 +366,8 @@ get_creds_from_tgs_reply(krb5_context context, krb5_tkt_creds_context ctx,
 
     krb5_free_creds(context, ctx->reply_creds);
     ctx->reply_creds = NULL;
-    code = krb5int_process_tgs_reply(context, reply, ctx->cur_tgt, ctx->kdcopt,
+    code = krb5int_process_tgs_reply(context, ctx->fast_state,
+                                     reply, ctx->cur_tgt, ctx->kdcopt,
                                      ctx->cur_tgt->addresses, NULL,
                                      ctx->tgs_in_creds, ctx->timestamp,
                                      ctx->nonce, ctx->subkey, NULL, NULL,
@@ -1112,6 +1123,7 @@ krb5_tkt_creds_free(krb5_context context, krb5_tkt_creds_context ctx)
 {
     if (ctx == NULL)
         return;
+    krb5int_fast_free_state(context, ctx->fast_state);
     krb5_free_creds(context, ctx->in_creds);
     krb5_cc_close(context, ctx->ccache);
     krb5_free_principal(context, ctx->req_server);
