@@ -72,9 +72,6 @@ configure-stamp:
 		$(SYSTEM) $(CACHE)
 	touch configure-stamp
 
-# Build the info pages in a separate directory, since otherwise we'll
-# overwrite the info pages provided upstream and then debian/rules clean won't
-# get back to a virgin copy of the package.
 build: build-arch build-indep
 
 build-arch: build-stamp
@@ -86,10 +83,8 @@ build-stamp: configure-stamp
 	touch build-stamp
 
 build-indep-stamp: build-stamp
-	-mkdir build/info
-	cd build/info && makeinfo ../../doc/admin.texinfo
-	cd build/info && makeinfo ../../doc/install.texinfo
-	cd build/info && makeinfo ../../doc/user-guide.texinfo
+	cd build/man ; make man
+	cd build/doc ; make substhtml
 	touch build-indep-stamp
 
 clean:
@@ -137,6 +132,9 @@ install: build
 # because they actually point to the current level not one level up
 	rm -f debian/krb5-multidev/usr/lib/$(DEB_HOST_MULTIARCH)/mit-krb5/libkadm5{clnt,srv}.so
 
+	mkdir -p debian/tmp/usr/share/doc/krb5-doc/html/
+	cp -r build/doc/html_subst/* debian/tmp/usr/share/doc/krb5-doc/html/
+	rm -rf debian/tmp/usr/share/doc/krb5-doc/html/_sources
 
 	docbook-to-man debian/krb5_newrealm.sgml \
 		> debian/krb5-admin-server/usr/share/man/man8/krb5_newrealm.8
@@ -155,8 +153,7 @@ binary-indep: build-indep  install
 	dh_testroot
 	dh_installchangelogs  -Xdoc/CHANGES
 	dh_installchangelogs -pkrb5-doc -k doc/CHANGES
-	dh_installdocs
-	dh_installinfo
+	dh_installdocs -A
 	dh_link
 	dh_compress
 	dh_fixperms

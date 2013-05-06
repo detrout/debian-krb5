@@ -1,3 +1,13 @@
+krb5 (1.11.2-1) UNRELEASED; urgency=low
+
+  * New upstream release
+  * Update some symbols files. A few symbols were removed from libkrb5.
+  * Add a dependency on python-sphinx, python-cheetah, python-lxml and doxygen to
+    build the new documentation.
+  * Adjust krb5-doc to contain the new html documentation.
+
+ -- Diane Trout <diane@ghic.org>  Fri, 03 May 2013 11:21:25 -0700
+
 krb5 (1.10.1+dfsg-5) unstable; urgency=high
 
   * Import workaround for getaddrinfo bug from upstream.  Described in
