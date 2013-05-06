@@ -14,11 +14,11 @@ HURd has no MAXPATHLEN or MAXHOSTLEN.
  src/tests/resolve/resolve.c                 |    4 ++++
  7 files changed, 31 insertions(+), 1 deletion(-)
 
-diff --git a/src/include/k5-int.h b/src/include/k5-int.h
-index 12fbbc8..7286e0b 100644
---- a/src/include/k5-int.h
-+++ b/src/include/k5-int.h
-@@ -575,6 +575,9 @@ extern char *strdup (const char *);
+Index: debian-krb5/src/include/k5-int.h
+===================================================================
+--- debian-krb5.orig/src/include/k5-int.h	2013-04-12 10:51:35.000000000 -0700
++++ debian-krb5/src/include/k5-int.h	2013-05-02 11:28:54.976082140 -0700
+@@ -552,6 +552,9 @@
  #ifdef HAVE_SYS_PARAM_H
  #include <sys/param.h>                  /* MAXPATHLEN */
  #endif
@@ -28,7 +28,7 @@ index 12fbbc8..7286e0b 100644
  
  #ifdef HAVE_SYS_FILE_H
  #include <sys/file.h>                   /* prototypes for file-related
-@@ -2109,7 +2112,11 @@ struct srv_dns_entry {
+@@ -2019,7 +2022,11 @@
      char *host;
  };
  
@@ -41,10 +41,10 @@ index 12fbbc8..7286e0b 100644
  
  #ifdef KRB5_DNS_LOOKUP
  krb5_error_code
-diff --git a/src/kadmin/ktutil/ktutil_funcs.c b/src/kadmin/ktutil/ktutil_funcs.c
-index 20a348c..b8b61ce 100644
---- a/src/kadmin/ktutil/ktutil_funcs.c
-+++ b/src/kadmin/ktutil/ktutil_funcs.c
+Index: debian-krb5/src/kadmin/ktutil/ktutil_funcs.c
+===================================================================
+--- debian-krb5.orig/src/kadmin/ktutil/ktutil_funcs.c	2013-04-12 10:51:35.000000000 -0700
++++ debian-krb5/src/kadmin/ktutil/ktutil_funcs.c	2013-05-02 11:28:54.976082140 -0700
 @@ -33,6 +33,10 @@
  #include <string.h>
  #include <ctype.h>
@@ -56,10 +56,10 @@ index 20a348c..b8b61ce 100644
  /*
   * Free a kt_list
   */
-diff --git a/src/lib/gssapi/spnego/spnego_mech.c b/src/lib/gssapi/spnego/spnego_mech.c
-index 70246b6..babb310 100644
---- a/src/lib/gssapi/spnego/spnego_mech.c
-+++ b/src/lib/gssapi/spnego/spnego_mech.c
+Index: debian-krb5/src/lib/gssapi/spnego/spnego_mech.c
+===================================================================
+--- debian-krb5.orig/src/lib/gssapi/spnego/spnego_mech.c	2013-04-12 10:51:35.000000000 -0700
++++ debian-krb5/src/lib/gssapi/spnego/spnego_mech.c	2013-05-02 11:28:54.984082139 -0700
 @@ -69,6 +69,9 @@
  #include	"gssapiP_spnego.h"
  #include	<gssapi_err_generic.h>
@@ -70,10 +70,10 @@ index 70246b6..babb310 100644
  
  #undef g_token_size
  #undef g_verify_token_header
-diff --git a/src/lib/krb5/os/kuserok.c b/src/lib/krb5/os/kuserok.c
-index 51471ae..6941b1d 100644
---- a/src/lib/krb5/os/kuserok.c
-+++ b/src/lib/krb5/os/kuserok.c
+Index: debian-krb5/src/lib/krb5/os/kuserok.c
+===================================================================
+--- debian-krb5.orig/src/lib/krb5/os/kuserok.c	2013-04-12 10:51:36.000000000 -0700
++++ debian-krb5/src/lib/krb5/os/kuserok.c	2013-05-02 11:28:54.988082138 -0700
 @@ -37,6 +37,10 @@
  
  #define MAX_USERNAME 65
@@ -85,11 +85,11 @@ index 51471ae..6941b1d 100644
  #if defined(__APPLE__) && defined(__MACH__)
  #include <hfs/hfs_mount.h>      /* XXX */
  #define FILE_OWNER_OK(UID)  ((UID) == 0 || (UID) == UNKNOWNUID)
-diff --git a/src/lib/krb5/os/sn2princ.c b/src/lib/krb5/os/sn2princ.c
-index 1bee5ae..3ad851f 100644
---- a/src/lib/krb5/os/sn2princ.c
-+++ b/src/lib/krb5/os/sn2princ.c
-@@ -60,6 +60,10 @@ maybe_use_reverse_dns (krb5_context context, int defalt)
+Index: debian-krb5/src/lib/krb5/os/sn2princ.c
+===================================================================
+--- debian-krb5.orig/src/lib/krb5/os/sn2princ.c	2013-04-12 10:51:36.000000000 -0700
++++ debian-krb5/src/lib/krb5/os/sn2princ.c	2013-05-02 11:28:54.988082138 -0700
+@@ -60,6 +60,10 @@
  }
  
  
@@ -100,11 +100,11 @@ index 1bee5ae..3ad851f 100644
  krb5_error_code KRB5_CALLCONV
  krb5_sname_to_principal(krb5_context context, const char *hostname, const char *sname, krb5_int32 type, krb5_principal *ret_princ)
  {
-diff --git a/src/plugins/kdb/db2/libdb2/include/db-int.h b/src/plugins/kdb/db2/libdb2/include/db-int.h
-index 8329ee3..6efa363 100644
---- a/src/plugins/kdb/db2/libdb2/include/db-int.h
-+++ b/src/plugins/kdb/db2/libdb2/include/db-int.h
-@@ -280,4 +280,8 @@ void	 __dbpanic __P((DB *dbp));
+Index: debian-krb5/src/plugins/kdb/db2/libdb2/include/db-int.h
+===================================================================
+--- debian-krb5.orig/src/plugins/kdb/db2/libdb2/include/db-int.h	2013-04-12 10:51:36.000000000 -0700
++++ debian-krb5/src/plugins/kdb/db2/libdb2/include/db-int.h	2013-05-02 11:28:55.016082138 -0700
+@@ -280,4 +280,8 @@
  #ifndef O_BINARY
  #define O_BINARY	0		/* Needed for Win32 compiles */
  #endif
@@ -113,11 +113,11 @@ index 8329ee3..6efa363 100644
 +# define MAXPATHLEN 4096
 +#endif
  #endif /* _DB_INT_H_ */
-diff --git a/src/tests/resolve/resolve.c b/src/tests/resolve/resolve.c
-index 7339d21..38f7253 100644
---- a/src/tests/resolve/resolve.c
-+++ b/src/tests/resolve/resolve.c
-@@ -73,6 +73,10 @@ char *strchr();
+Index: debian-krb5/src/tests/resolve/resolve.c
+===================================================================
+--- debian-krb5.orig/src/tests/resolve/resolve.c	2013-04-12 10:51:36.000000000 -0700
++++ debian-krb5/src/tests/resolve/resolve.c	2013-05-02 11:28:55.020082140 -0700
+@@ -73,6 +73,10 @@
  #include <netinet/in.h>
  #include <netdb.h>
  

@@ -8,11 +8,9 @@ Patch-Category: debian-local
  src/include/osconf.hin |    4 ++--
  1 file changed, 2 insertions(+), 2 deletions(-)
 
-diff --git a/src/include/osconf.hin b/src/include/osconf.hin
-index f53ef1b..015182f 100644
 --- a/src/include/osconf.hin
 +++ b/src/include/osconf.hin
-@@ -118,8 +118,8 @@
+@@ -116,8 +116,8 @@
   * krb5 slave support follows
   */
  

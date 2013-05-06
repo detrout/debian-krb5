@@ -7,13 +7,11 @@ Subject: Debian: set AI_ADDRCONFIG for kprop slave
  src/slave/kprop.c |    1 +
  1 file changed, 1 insertion(+)
 
-diff --git a/src/slave/kprop.c b/src/slave/kprop.c
-index 473f9f2..6fbfc1e 100644
 --- a/src/slave/kprop.c
 +++ b/src/slave/kprop.c
-@@ -321,6 +321,7 @@ open_connection(krb5_context context, char *host, int *fd)
-     int error;
+@@ -323,6 +323,7 @@
  
+     *fd_out = -1;
      memset(&hints, 0, sizeof(hints));
 +    hints.ai_flags = AI_ADDRCONFIG;
      hints.ai_family = PF_UNSPEC;

@@ -13,26 +13,22 @@ Patch-Name: time_locale
  src/kadmin/cli/ss_wrapper.c |    1 +
  2 files changed, 2 insertions(+)
 
-diff --git a/src/clients/klist/klist.c b/src/clients/klist/klist.c
-index a9a9171..f0d55e8 100644
 --- a/src/clients/klist/klist.c
 +++ b/src/clients/klist/klist.c
-@@ -119,6 +119,7 @@ main(argc, argv)
+@@ -122,6 +122,7 @@
      int mode;
  
-     setlocale(LC_MESSAGES, "");
+     setlocale(LC_ALL, "");
 +    setlocale(LC_TIME, "");
      progname = GET_PROGNAME(argv[0]);
  
      name = NULL;
-diff --git a/src/kadmin/cli/ss_wrapper.c b/src/kadmin/cli/ss_wrapper.c
-index f86c215..2608d8c 100644
 --- a/src/kadmin/cli/ss_wrapper.c
 +++ b/src/kadmin/cli/ss_wrapper.c
-@@ -40,6 +40,7 @@ main(int argc, char *argv[])
+@@ -41,6 +41,7 @@
      int sci_idx, code = 0;
  
-     setlocale(LC_MESSAGES, "");
+     setlocale(LC_ALL, "");
 +    setlocale(LC_TIME, "");
      whoami = ((whoami = strrchr(argv[0], '/')) ? whoami+1 : argv[0]);
  

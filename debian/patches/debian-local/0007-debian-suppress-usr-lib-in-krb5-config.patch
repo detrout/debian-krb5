@@ -10,19 +10,17 @@ Patch-Category: debian-local
  src/krb5-config.in |   14 +++++++++-----
  1 file changed, 9 insertions(+), 5 deletions(-)
 
-diff --git a/src/krb5-config.in b/src/krb5-config.in
-index b476b4f..cad5afc 100755
 --- a/src/krb5-config.in
 +++ b/src/krb5-config.in
-@@ -117,6 +117,7 @@ if test -n "$do_help"; then
-     echo "        [--prefix]        Kerberos installed prefix"
-     echo "        [--exec-prefix]   Kerberos installed exec_prefix"
+@@ -135,6 +135,7 @@
+     echo "        [--defktname]     Show built-in default keytab name"
+     echo "        [--defcktname]    Show built-in default client keytab name"
      echo "        [--cflags]        Compile time CFLAGS"
 +    echo "        [--deps]          Include dependent libraries"
      echo "        [--libs]          List libraries required to link [LIBRARIES]"
      echo "Libraries:"
      echo "        krb5              Kerberos 5 application"
-@@ -172,11 +173,14 @@ fi
+@@ -205,11 +206,14 @@
  
  if test -n "$do_libs"; then
      # Assumes /usr/lib is the standard library directory everywhere...
